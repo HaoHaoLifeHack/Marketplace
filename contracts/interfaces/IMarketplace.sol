@@ -21,7 +21,11 @@ interface IMarketplace {
         uint256 deadline;
     }
 
-    function list(Order memory order) external;
+    function list(
+        Item memory toSell,
+        Item memory toFulfill,
+        uint256 deadline
+    ) external;
 
     function cancel(uint256 eid) external;
 

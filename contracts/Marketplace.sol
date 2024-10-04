@@ -10,8 +10,6 @@ import "hardhat/console.sol";
 contract Marketplace is IMarketplace {
     uint256 private _orderCounter; //For eid counter
     mapping(uint256 => Order) public orders; // Map eid to Order
-    mapping(address => uint256[]) public sellerOrders; // Track orders by seller
-    address public platformFeeRecipient;
     uint256 public platformFeePercentage = 5; // 5% platform fee
     OracleHandler public oracleHandler;
 
@@ -26,25 +24,28 @@ contract Marketplace is IMarketplace {
 
     constructor(OracleHandler _oracleHandler) {
         oracleHandler = _oracleHandler;
-        _orderCounter = 0;
     }
 
     // Seller creates a new order to list an item for sale
-    function list(Order memory order) external override {
-        require(order.toSell.asset != address(0), "Invalid sell asset");
-        require(order.toFulfill.asset != address(0), "Invalid fulfill asset");
+    function list(
+        Item memory toSell,
+        Item memory toFulfill,
+        uint256 deadline
+    ) external override {
+        require(toSell.asset != address(0), "Invalid sell asset");
+        require(toFulfill.asset != address(0), "Invalid fulfill asset");
         uint256 eid = ++_orderCounter;
         orders[eid] = Order({
             eid: eid,
             seller: msg.sender,
             buyer: address(0),
-            toSell: order.toSell,
-            toFulfill: order.toFulfill,
+            toSell: toSell,
+            toFulfill: toFulfill,
             fulfilled: false,
-            deadline: order.deadline
+            deadline: deadline
         });
 
-        emit OrderCreated(eid, msg.sender, order.toSell, order.toFulfill);
+        emit OrderCreated(eid, msg.sender, toSell, toFulfill);
     }
 
     // Seller cancels their own order
