@@ -57,66 +57,59 @@ contract Marketplace is IMarketplace {
         emit OrderCancelled(eid);
     }
 
-    // Buyer fulfills a seller's order
     function fulfill(uint256 eid) external payable override {
         Order storage order = orders[eid];
         require(!order.fulfilled, "Order already fulfilled");
         require(block.timestamp <= order.deadline, "Order expired");
+
         uint256 platformFee;
-        // Transfer assets from buyer to seller
-        if (_isERC721(order.toFulfill.asset)) {
-            // Handle ERC721 asset transfer from buyer to seller
-            IERC721(order.toFulfill.asset).safeTransferFrom(
-                msg.sender,
-                order.seller,
-                order.toFulfill.amountOrTokenId
-            );
 
-            // Fetch price for ERC721 from Oracle (or mock implementation)
-            uint256 priceInETH = oracleHandler.getLatestPriceInETH(
-                order.toFulfill.asset
-            );
-            platformFee = (priceInETH * platformFeePercentage) / 100;
-            require(
-                msg.value >= platformFee,
-                "Insufficient ETH for platform fee"
-            );
-        } else {
-            // Handle ERC20 asset transfer from buyer to seller
-            IERC20(order.toFulfill.asset).transferFrom(
-                msg.sender,
-                order.seller,
-                order.toFulfill.amountOrTokenId
-            );
+        // First fetch the price in ETH to calculate platform fee
+        uint256 priceInETH = oracleHandler.getLatestPriceInETH(
+            order.toFulfill.asset
+        );
+        platformFee = (priceInETH * platformFeePercentage) / 100;
+        require(msg.value >= platformFee, "Insufficient ETH for platform fee");
 
-            // Fetch price for ERC20 from Oracle
-            uint256 priceInETH = oracleHandler.getLatestPriceInETH(
-                order.toFulfill.asset
-            );
-            platformFee = (priceInETH * platformFeePercentage) / 100;
-            require(
-                msg.value >= platformFee,
-                "Insufficient ETH for platform fee"
-            );
-        }
+        // Handle asset transfer from seller to buyer
+        _handleAssetTransfer(order.toSell, order.seller, msg.sender);
 
-        // Transfer item being sold to buyer
-        if (_isERC721(order.toSell.asset)) {
-            IERC721(order.toSell.asset).safeTransferFrom(
-                order.seller,
-                msg.sender,
-                order.toSell.amountOrTokenId
-            );
-        } else {
-            IERC20(order.toSell.asset).transferFrom(
-                order.seller,
-                msg.sender,
-                order.toSell.amountOrTokenId
-            );
-        }
+        // Handle payment transfer from buyer to seller
+        _handleAssetTransfer(order.toFulfill, msg.sender, order.seller);
 
+        // Mark the order as fulfilled only after both transfers succeed
         order.fulfilled = true;
+
         emit OrderFulfilled(eid, msg.sender, platformFee);
+    }
+
+    // Helper function to handle asset transfer
+    function _handleAssetTransfer(
+        Item memory item,
+        address from,
+        address to
+    ) internal {
+        if (_isERC721(item.asset)) {
+            try
+                IERC721(item.asset).safeTransferFrom(
+                    from,
+                    to,
+                    item.amountOrTokenId
+                )
+            {
+                // Transfer successful
+            } catch {
+                revert("ERC721 transfer failed");
+            }
+        } else {
+            try
+                IERC20(item.asset).transferFrom(from, to, item.amountOrTokenId)
+            {
+                // Transfer successful
+            } catch {
+                revert("ERC20 transfer failed");
+            }
+        }
     }
 
     // Helper function to check if an asset is ERC721
@@ -140,7 +133,7 @@ contract Marketplace is IMarketplace {
         Order[] memory activeOrders = new Order[](totalOrders);
         for (uint256 i = 0; i < totalOrders; i++) {
             if (!orders[i].fulfilled) {
-                activeOrders[i] = orders[i];
+                activeOrders[i] = orders[i + 1];
             }
         }
         return activeOrders;
