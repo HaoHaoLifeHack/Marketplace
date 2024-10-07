@@ -8,6 +8,7 @@ import "./interfaces/IMarketplace.sol";
 import "hardhat/console.sol";
 
 contract Marketplace is IMarketplace {
+    address owner;
     uint256 private _orderCounter; //For eid counter
     mapping(uint256 => Order) public orders; // Map eid to Order
     uint256 public platformFeePercentage = 5; // 5% platform fee
@@ -21,8 +22,10 @@ contract Marketplace is IMarketplace {
     );
     event OrderCancelled(uint256 eid);
     event OrderFulfilled(uint256 eid, address buyer, uint256 feeInETH);
+    event Withdraw(address indexed receiver, uint256 amount);
 
     constructor(OracleHandler _oracleHandler) {
+        owner = msg.sender;
         oracleHandler = _oracleHandler;
     }
 
@@ -131,7 +134,7 @@ contract Marketplace is IMarketplace {
     function viewOrders() external view returns (Order[] memory) {
         uint256 totalOrders = _orderCounter;
 
-        // First, count the active (unfulfilled) orders
+        // Count the active (unfulfilled) orders
         uint256 activeCount = 0;
         for (uint256 i = 1; i <= totalOrders; i++) {
             if (!orders[i].fulfilled) {
@@ -153,4 +156,17 @@ contract Marketplace is IMarketplace {
 
         return activeOrders;
     }
+
+    function withdraw() external onlyOwner {
+        require(address(this).balance > 0, "No balance to withdraw");
+        payable(owner).transfer(address(this).balance);
+        emit Withdraw(owner, address(this).balance);
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only owner can call this function");
+        _;
+    }
+
+    receive() external payable {}
 }

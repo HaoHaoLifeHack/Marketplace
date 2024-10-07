@@ -238,6 +238,38 @@ describe("Marketplace Contract", function () {
       expect(listedOrder.seller).to.equal(seller.address);
       //console.log("ERC721 listedOrder: ", listedOrder);
     });
+
+    it("Should revert when toSell.asset is address(0)", async function () {
+      const invalidToSell = {
+        asset: ethers.ZeroAddress,
+        amountOrTokenId: 1,
+      };
+      const validToFulfill = { asset: owner.address, amountOrTokenId: 1 };
+
+      await expect(
+        marketplace.list(
+          invalidToSell,
+          validToFulfill,
+          Math.floor(Date.now() / 1000) + 1000
+        )
+      ).to.be.revertedWith("Invalid sell asset");
+    });
+
+    it("Should revert when toFulfill.asset is address(0)", async function () {
+      const validToSell = { asset: owner.address, amountOrTokenId: 1 };
+      const invalidToFulfill = {
+        asset: ethers.ZeroAddress,
+        amountOrTokenId: 1,
+      };
+
+      await expect(
+        marketplace.list(
+          validToSell,
+          invalidToFulfill,
+          Math.floor(Date.now() / 1000) + 1000
+        )
+      ).to.be.revertedWith("Invalid fulfill asset");
+    });
     // TODO: OrderCreated event emit.WithArgs not equal issue
     // it("Should emit OrderCreated event when listing an order", async function () {
     //   const order = {
@@ -286,6 +318,32 @@ describe("Marketplace Contract", function () {
         "Only seller can cancel"
       );
     });
+
+    it("Should revert the cancel when the order has already been fulfilled", async function () {
+      // List order by seller
+      const toSell = { asset: usdcAddress, amountOrTokenId: 100 };
+      const toFulfill = { asset: highAddress, amountOrTokenId: 10 };
+      const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour later
+      await marketplace.connect(seller).list(toSell, toFulfill, deadline);
+
+      // Approve allowance to fulfill the order
+      await usdc.connect(seller).approve(marketplace.getAddress(), 100);
+      await high.connect(buyer).approve(marketplace.getAddress(), 10);
+
+      // Fulfill the order, buyer should know the fee offchain
+      await marketplace
+        .connect(buyer)
+        .fulfill(1, { value: ethers.parseEther("11") });
+
+      // Check that the order is fulfilled
+      const fulfilledOrder = await marketplace.orders(1);
+      expect(fulfilledOrder.fulfilled).to.equal(true);
+
+      // Try to cancel the already fulfilled order
+      await expect(marketplace.connect(seller).cancel(1)).to.be.revertedWith(
+        "Order already fulfilled"
+      );
+    });
   });
 
   describe("IsERC721", function () {
@@ -320,6 +378,53 @@ describe("Marketplace Contract", function () {
       expect(fulfilledOrder.fulfilled).to.equal(true);
     });
 
+    it("Should not allow buyer to fulfill an fulfilled order", async function () {
+      // List order by seller
+      const toSell = { asset: usdcAddress, amountOrTokenId: 100 };
+      const toFulfill = { asset: highAddress, amountOrTokenId: 10 };
+      const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour later
+      await marketplace.connect(seller).list(toSell, toFulfill, deadline);
+
+      // Approve allowance to fulfill the order
+      await usdc.connect(seller).approve(marketplace.getAddress(), 100);
+      await high.connect(buyer).approve(marketplace.getAddress(), 10);
+
+      // Fulfill the order, buyer should know the fee offchain
+      await marketplace
+        .connect(buyer)
+        .fulfill(1, { value: ethers.parseEther("11") });
+
+      // Check that the order is fulfilled
+      const fulfilledOrder = await marketplace.orders(1);
+
+      // Try to fulfill the already fulfilled order
+      await expect(
+        marketplace
+          .connect(buyer)
+          .fulfill(1, { value: ethers.parseEther("11") })
+      ).to.be.revertedWith("Order already fulfilled");
+    });
+
+    it("Should not allow buyer to fulfill an order over the deadline", async function () {
+      // List order by seller
+      const toSell = { asset: usdcAddress, amountOrTokenId: 100 };
+      const toFulfill = { asset: highAddress, amountOrTokenId: 10 };
+      const deadline = 1; // earlier
+      console.log("deadline: ", deadline);
+      await marketplace.connect(seller).list(toSell, toFulfill, deadline);
+
+      // Approve allowance to fulfill the order
+      await usdc.connect(seller).approve(marketplace.getAddress(), 100);
+      await high.connect(buyer).approve(marketplace.getAddress(), 10);
+
+      // Fulfill the order, buyer should know the fee offchain
+      await expect(
+        marketplace
+          .connect(buyer)
+          .fulfill(1, { value: ethers.parseEther("11") })
+      ).to.be.revertedWith("Order expired");
+    });
+
     it("Should not allow fulfilling ERC20 with insufficient ETH for fee", async function () {
       // List order by seller
       const toSell = { asset: usdcAddress, amountOrTokenId: 100 };
@@ -335,18 +440,6 @@ describe("Marketplace Contract", function () {
       await expect(
         marketplace.connect(buyer).fulfill(1, { value: 1 })
       ).to.be.revertedWith("Insufficient ETH for platform fee");
-    });
-
-    it("Should allow user to view current orders", async function () {
-      // List order by seller
-      const toSell = { asset: usdcAddress, amountOrTokenId: 100 };
-      const toFulfill = { asset: highAddress, amountOrTokenId: 10 };
-      const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour later
-      await marketplace.connect(seller).list(toSell, toFulfill, deadline);
-      // Check that the order is listed
-      const listOrders = await marketplace.viewOrders();
-      //console.log("View all orders: ", listOrders);
-      expect(listOrders.length).to.equal(1);
     });
 
     it("Should allow buyer to fulfill an ERC721 order", async function () {
@@ -462,6 +555,105 @@ describe("Marketplace Contract", function () {
           .connect(buyer)
           .fulfill(1, { value: ethers.parseEther("0.5") })
       ).to.be.revertedWith("ERC20 transfer failed");
+    });
+  });
+
+  describe("ViewOrders", function () {
+    it("Should allow user to view current orders", async function () {
+      // List order by seller
+      const toSell = { asset: usdcAddress, amountOrTokenId: 100 };
+      const toFulfill = { asset: highAddress, amountOrTokenId: 10 };
+      const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour later
+      await marketplace.connect(seller).list(toSell, toFulfill, deadline);
+      // Check that the order is listed
+      const listOrders = await marketplace.viewOrders();
+      //console.log("View all orders: ", listOrders);
+      expect(listOrders.length).to.equal(1);
+    });
+
+    it("Should not allow to view fulfilled orders", async function () {
+      // List order by seller
+      const toSell = { asset: usdcAddress, amountOrTokenId: 100 };
+      const toFulfill = { asset: highAddress, amountOrTokenId: 10 };
+      const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour later
+      await marketplace.connect(seller).list(toSell, toFulfill, deadline);
+      // Check that the order is listed)
+    });
+  });
+
+  describe("OracleHandler", function () {
+    it("Should revert when priceFeed is the zero address in setChainlinkPriceFeed", async function () {
+      const asset = ethers.ZeroAddress;
+      await expect(
+        oracleHandler.setChainlinkPriceFeed(asset, ethers.ZeroAddress)
+      ).to.be.revertedWith("Invalid price feed address");
+    });
+
+    it("Should revert when priceFeedAddress is not set in getLatestPriceInETH", async function () {
+      const asset = ethers.ZeroAddress;
+      await expect(oracleHandler.getLatestPriceInETH(asset)).to.be.revertedWith(
+        "Invalid price feed address"
+      );
+    });
+  });
+
+  describe("Withdraw", function () {
+    it("Should allow the owner to withdraw platform fees", async function () {
+      const marketplaceAddress = await marketplace.getAddress();
+      const contractBalanceBefore = await ethers.provider.getBalance(
+        marketplaceAddress
+      );
+      console.log(
+        `Contract balance before withdrawal: ${contractBalanceBefore}`
+      );
+      // Check that the owner's balance increased (considering gas fees)
+      const ownerBalanceBefore = await ethers.provider.getBalance(
+        owner.address
+      );
+
+      console.log(`Owner balance before withdrawal: ${ownerBalanceBefore}`);
+
+      // Withdraw funds by the owner
+      await marketplace.withdraw();
+
+      // Check that the contract's balance is now 0 after withdrawal
+      const contractBalanceAfterWithdraw = await ethers.provider.getBalance(
+        marketplaceAddress
+      );
+      console.log(
+        `Contract balance after withdrawal: ${contractBalanceAfterWithdraw}`
+      );
+      expect(contractBalanceAfterWithdraw).to.equal(0);
+
+      const ownerBalanceAfter = await ethers.provider.getBalance(owner.address);
+      console.log(`Owner balance after withdrawal: ${ownerBalanceAfter}`);
+
+      // Ensure the owner's balance increased correctly by the platform fee amount minus gas
+      expect(ownerBalanceAfter).to.be.above(ownerBalanceBefore);
+    });
+
+    it("Should not allow non-owners to withdraw", async function () {
+      // Simulate sending some ETH as platform fees to the contract
+      const platformFeeAmount = ethers.parseEther("0.5");
+      const marketplaceAddress = await marketplace.getAddress();
+      await buyer.sendTransaction({
+        to: marketplaceAddress,
+        value: platformFeeAmount,
+      });
+
+      // Try to call withdraw from a non-owner account
+      await expect(marketplace.connect(buyer).withdraw()).to.be.revertedWith(
+        "Only owner can call this function"
+      );
+    });
+
+    it("Should revert if there is no balance to withdraw", async function () {
+      // withdraw funds by the owner first
+      marketplace.withdraw();
+      // Try to call withdraw the second time
+      await expect(marketplace.withdraw()).to.be.revertedWith(
+        "No balance to withdraw"
+      );
     });
   });
 });

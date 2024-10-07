@@ -16,7 +16,6 @@ contract OracleHandler {
 
     constructor(IPriceFeed _usdcEthPriceFeed) {
         usdcEthPriceFeed = _usdcEthPriceFeed;
-        //nftPriceFeed = new NFTPriceFeed();
     }
 
     /**

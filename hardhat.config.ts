@@ -2,6 +2,8 @@ import { config as dotenvConfig } from "dotenv";
 import { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
 import "@nomicfoundation/hardhat-foundry";
+import "hardhat-deploy";
+import "@nomicfoundation/hardhat-ignition";
 
 dotenvConfig({ path: "./.env" });
 
@@ -21,6 +23,11 @@ const config: HardhatUserConfig = {
         url: `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`,
         blockNumber: 20910716,
       },
+    },
+  },
+  namedAccounts: {
+    deployer: {
+      default: 0, // The first account in the list will be the deployer
     },
   },
   etherscan: {
