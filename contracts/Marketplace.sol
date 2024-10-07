@@ -130,12 +130,27 @@ contract Marketplace is IMarketplace {
     // View all active orders
     function viewOrders() external view returns (Order[] memory) {
         uint256 totalOrders = _orderCounter;
-        Order[] memory activeOrders = new Order[](totalOrders);
-        for (uint256 i = 0; i < totalOrders; i++) {
+
+        // First, count the active (unfulfilled) orders
+        uint256 activeCount = 0;
+        for (uint256 i = 1; i <= totalOrders; i++) {
             if (!orders[i].fulfilled) {
-                activeOrders[i] = orders[i + 1];
+                activeCount++;
             }
         }
+
+        // Create an array of the correct size
+        Order[] memory activeOrders = new Order[](activeCount);
+        uint256 index = 0;
+
+        // Fill the array with active orders
+        for (uint256 i = 1; i <= totalOrders; i++) {
+            if (!orders[i].fulfilled) {
+                activeOrders[index] = orders[i];
+                index++;
+            }
+        }
+
         return activeOrders;
     }
 }

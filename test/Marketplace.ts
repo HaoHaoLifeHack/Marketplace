@@ -130,16 +130,29 @@ describe("Marketplace Contract", function () {
       params: [usdcWhaleAddress],
     });
     const usdcWhale = await ethers.getSigner(usdcWhaleAddress);
-    await usdc.connect(usdcWhale).transfer(buyerAddress, usdcInitAmount);
+
+    // Check initial USDC balance of test account
+    const initSellerBalance = await usdc.balanceOf(sellerAddress);
+    initSellerBalance != 0
+      ? await usdc
+          .connect(usdcWhale)
+          .transfer(sellerAddress, usdcInitAmount - initSellerBalance)
+      : await usdc.connect(usdcWhale).transfer(sellerAddress, usdcInitAmount);
 
     // Impersonate a High holder with a large balance (whale)
     await network.provider.request({
       method: "hardhat_impersonateAccount",
       params: [highWhaleAddress],
     });
-
     const highWhale = await ethers.getSigner(highWhaleAddress);
-    await high.connect(highWhale).transfer(buyerAddress, highInitAmount);
+
+    // Check initial High balance of test account
+    const initHighBalance = await high.balanceOf(buyerAddress);
+    initHighBalance != 0
+      ? await high
+          .connect(highWhale)
+          .transfer(buyerAddress, highInitAmount - initHighBalance)
+      : await high.connect(highWhale).transfer(buyerAddress, highInitAmount);
 
     // Buyer need AZUKI
     // Seller need BAYC
@@ -181,7 +194,7 @@ describe("Marketplace Contract", function () {
     });
 
     it("Should transfer USDC from whale to seller", async () => {
-      const finalBalance = await usdc.balanceOf(buyerAddress);
+      const finalBalance = await usdc.balanceOf(sellerAddress);
       console.log(`Final USDC balance: ${finalBalance}`);
       expect(finalBalance).to.equal(usdcInitAmount);
     });
@@ -216,8 +229,8 @@ describe("Marketplace Contract", function () {
     });
 
     it("Should allow seller to list an ERC721 for sale", async function () {
-      const toSell = { asset: baycAddress, amountOrTokenId: 1 };
-      const toFulfill = { asset: azukiAddress, amountOrTokenId: 2 };
+      const toSell = { asset: baycAddress, amountOrTokenId: 2464 };
+      const toFulfill = { asset: azukiAddress, amountOrTokenId: 7737 };
       const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour later
       await marketplace.connect(seller).list(toSell, toFulfill, deadline);
       const listedOrder = await marketplace.orders(1);
@@ -285,9 +298,6 @@ describe("Marketplace Contract", function () {
     });
   });
 
-  // TODO:Edge Case
-  //1. Think about the asset was transferred to others before the Order fulfilled
-  //2. list(needed data)
   describe("Fulfilling Orders", function () {
     it("Should allow buyer to fulfill an ERC20 order", async function () {
       // List order by seller
@@ -335,7 +345,7 @@ describe("Marketplace Contract", function () {
       await marketplace.connect(seller).list(toSell, toFulfill, deadline);
       // Check that the order is listed
       const listOrders = await marketplace.viewOrders();
-      console.log("View all orders: ", listOrders);
+      //console.log("View all orders: ", listOrders);
       expect(listOrders.length).to.equal(1);
     });
 
@@ -348,8 +358,8 @@ describe("Marketplace Contract", function () {
 
       // Approve allowance to fulfill the order
       const marketplaceAddress = marketplace.getAddress();
-      await azuki.connect(buyer).approve(marketplaceAddress, 7737);
       await bayc.connect(seller).approve(marketplaceAddress, 2464);
+      await azuki.connect(buyer).approve(marketplaceAddress, 7737);
 
       // Fulfill the order by buyer, buyer should know the fee offchain
       await marketplace
@@ -361,6 +371,41 @@ describe("Marketplace Contract", function () {
       expect(fulfilledOrder.fulfilled).to.equal(true);
     });
 
+    it("Should successfully fulfill an ERC721 and ERC20 order", async function () {
+      // Seller lists an ERC721 (BAYC) and expects ERC20 (USDC) in return
+      const toSell = { asset: baycAddress, amountOrTokenId: 2464 };
+      const toFulfill = { asset: highAddress, amountOrTokenId: 1000 }; // 1000 USDC as payment
+      const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour later
+
+      // Seller lists the order
+      await marketplace.connect(seller).list(toSell, toFulfill, deadline);
+
+      // Approve ERC721 transfer by the seller
+      const marketplaceAddress = await marketplace.getAddress();
+      await bayc.connect(seller).approve(marketplaceAddress, 2464);
+
+      // Approve ERC20 (HIGH) transfer by the buyer
+      await high.connect(buyer).approve(marketplaceAddress, 1000);
+
+      // Buyer fulfills the order, paying in HIGH for BAYC NFT
+      await marketplace
+        .connect(buyer)
+        .fulfill(1, { value: ethers.parseEther("0.5") }); // Assuming 0.5 ETH is the platform fee
+
+      // Check if the order was fulfilled
+      const fulfilledOrder = await marketplace.orders(1);
+      expect(fulfilledOrder.fulfilled).to.equal(true);
+
+      // Check if ERC721 (BAYC) was transferred to the buyer
+      const buyerBAYCBalance = await bayc.balanceOf(buyerAddress);
+      expect(buyerBAYCBalance).to.equal(1); // Buyer should own 1 Azuki token now
+
+      // Check if ERC20 (HIGH) was transferred to the seller
+      const sellerHIGHBalance = await high.balanceOf(sellerAddress);
+      expect(sellerHIGHBalance).to.equal(1000); // Seller should receive 1000 USDC
+    });
+
+    // Edge Case
     it("Should not allow fulfilling ERC721 with insufficient ETH for fee", async function () {
       // List order by seller
       const toSell = { asset: baycAddress, amountOrTokenId: 2464 };
@@ -379,6 +424,44 @@ describe("Marketplace Contract", function () {
       ).to.be.revertedWith("Insufficient ETH for platform fee");
     });
 
-    // exchange ERC721 for ERC20
+    it("Should revert when ERC721 transfer fails", async function () {
+      const toSell = { asset: baycAddress, amountOrTokenId: 2464 }; // BAYC asset to sell
+      const toFulfill = { asset: usdcAddress, amountOrTokenId: 1000 }; // USDC asset for payment
+      const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour later
+
+      // List order by seller
+      await marketplace.connect(seller).list(toSell, toFulfill, deadline);
+
+      // Approve ERC20 payment (USDC) by buyer, but DO NOT approve ERC721 transfer by seller
+      const marketplaceAddress = await marketplace.getAddress();
+      await usdc.connect(buyer).approve(marketplaceAddress, 1000);
+
+      // Try to fulfill the order without ERC721 approval, which should fail
+      await expect(
+        marketplace
+          .connect(buyer)
+          .fulfill(1, { value: ethers.parseEther("0.5") })
+      ).to.be.revertedWith("ERC721 transfer failed");
+    });
+
+    it("Should revert when ERC20 transfer fails", async function () {
+      const toSell = { asset: baycAddress, amountOrTokenId: 2464 };
+      const toFulfill = { asset: usdcAddress, amountOrTokenId: 1000 }; // USDC asset for payment
+      const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour later
+
+      // List order by seller
+      await marketplace.connect(seller).list(toSell, toFulfill, deadline);
+
+      // Approve ERC721 transfer by seller but DO NOT approve ERC20 (USDC) transfer by buyer
+      const marketplaceAddress = await marketplace.getAddress();
+      await bayc.connect(seller).approve(marketplaceAddress, 2464);
+
+      // Try to fulfill the order without ERC20 approval, which should fail
+      await expect(
+        marketplace
+          .connect(buyer)
+          .fulfill(1, { value: ethers.parseEther("0.5") })
+      ).to.be.revertedWith("ERC20 transfer failed");
+    });
   });
 });
