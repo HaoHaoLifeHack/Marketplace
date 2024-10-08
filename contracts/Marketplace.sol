@@ -11,7 +11,7 @@ contract Marketplace is IMarketplace {
     address owner;
     uint256 private _orderCounter; //For eid counter
     mapping(uint256 => Order) public orders; // Map eid to Order
-    uint256 public platformFeePercentage = 499999; // 4.99999% platform fee
+    uint256 public platformFeePercentage = 500; //5.00%
     OracleHandler public oracleHandler;
 
     event OrderCreated(
@@ -71,7 +71,7 @@ contract Marketplace is IMarketplace {
         uint256 priceInETH = oracleHandler.getLatestPriceInETH(
             order.toFulfill.asset
         );
-        platformFee = (priceInETH * platformFeePercentage) / 10000000; // 499999/10000000 = 4.99999%
+        platformFee = (priceInETH * platformFeePercentage) / 10000;
         require(msg.value >= platformFee, "Insufficient ETH for platform fee");
 
         // Handle asset transfer from seller to buyer
