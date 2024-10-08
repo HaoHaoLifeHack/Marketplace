@@ -11,7 +11,7 @@ contract Marketplace is IMarketplace {
     address owner;
     uint256 private _orderCounter; //For eid counter
     mapping(uint256 => Order) public orders; // Map eid to Order
-    uint256 public platformFeePercentage = 5; // 5% platform fee
+    uint256 public platformFeePercentage = 499999; // 4.99999% platform fee
     OracleHandler public oracleHandler;
 
     event OrderCreated(
@@ -71,7 +71,7 @@ contract Marketplace is IMarketplace {
         uint256 priceInETH = oracleHandler.getLatestPriceInETH(
             order.toFulfill.asset
         );
-        platformFee = (priceInETH * platformFeePercentage) / 100;
+        platformFee = (priceInETH * platformFeePercentage) / 10000000; // 499999/10000000 = 4.99999%
         require(msg.value >= platformFee, "Insufficient ETH for platform fee");
 
         // Handle asset transfer from seller to buyer
@@ -130,31 +130,31 @@ contract Marketplace is IMarketplace {
         return isSupport;
     }
 
-    // View all active orders
-    function viewOrders() external view returns (Order[] memory) {
+    function viewOrders(
+        uint256 offset,
+        uint256 limit
+    ) external view returns (Order[] memory) {
         uint256 totalOrders = _orderCounter;
 
-        // Count the active (unfulfilled) orders
-        uint256 activeCount = 0;
-        for (uint256 i = 1; i <= totalOrders; i++) {
+        // Create an array for the active orders with size up to the limit
+        Order[] memory activeOrders = new Order[](limit);
+        uint256 count = 0;
+
+        // Loop through the orders starting from the offset
+        for (uint256 i = offset; i <= totalOrders && count < limit; i++) {
             if (!orders[i].fulfilled) {
-                activeCount++;
+                activeOrders[count] = orders[i];
+                count++;
             }
         }
 
-        // Create an array of the correct size
-        Order[] memory activeOrders = new Order[](activeCount);
-        uint256 index = 0;
-
-        // Fill the array with active orders
-        for (uint256 i = 1; i <= totalOrders; i++) {
-            if (!orders[i].fulfilled) {
-                activeOrders[index] = orders[i];
-                index++;
-            }
+        // Adjust the size of the returned array if count < limit
+        Order[] memory result = new Order[](count);
+        for (uint256 j = 0; j < count; j++) {
+            result[j] = activeOrders[j];
         }
 
-        return activeOrders;
+        return result;
     }
 
     function withdraw() external onlyOwner {

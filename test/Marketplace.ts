@@ -560,26 +560,57 @@ describe("Marketplace Contract", function () {
 
   describe("ViewOrders", function () {
     it("Should allow user to view current orders", async function () {
-      // List order by seller
-      const toSell = { asset: usdcAddress, amountOrTokenId: 100 };
-      const toFulfill = { asset: highAddress, amountOrTokenId: 10 };
-      const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour later
-      await marketplace.connect(seller).list(toSell, toFulfill, deadline);
-      // Check that the order is listed
-      const listOrders = await marketplace.viewOrders();
-      //console.log("View all orders: ", listOrders);
-      expect(listOrders.length).to.equal(1);
-    });
+      await setupOrders();
 
-    it("Should not allow to view fulfilled orders", async function () {
-      // List order by seller
-      const toSell = { asset: usdcAddress, amountOrTokenId: 100 };
-      const toFulfill = { asset: highAddress, amountOrTokenId: 10 };
-      const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour later
-      await marketplace.connect(seller).list(toSell, toFulfill, deadline);
-      // Check that the order is listed)
+      // Check that the order is listed
+      const offset = 1;
+      const limit = 5;
+      var listOrders = await marketplace.viewOrders(offset, limit);
+      console.log(`Listed orders: ${listOrders}\n`);
+      expect(listOrders.length).to.equal(5);
+      expect(listOrders[0].fulfilled).to.equal(false);
+      expect(listOrders[1].fulfilled).to.equal(false);
+
+      // Test 2: Fetch next 5 orders starting from offset 8
+      listOrders = await marketplace.viewOrders(8, 5);
+      console.log(`Listed orders: ${listOrders}\n`);
+      expect(listOrders.length).to.equal(3); // Only 3 active orders left
+    });
+    it("Should handle empty results when offset exceeds totalOrders", async function () {
+      const offset = 11;
+      const limit = 5;
+      const listOrders = await marketplace.viewOrders(offset, limit);
+      expect(listOrders.length).to.equal(0);
     });
   });
+
+  async function setupOrders() {
+    // List orders by seller
+    const toSell = { asset: usdcAddress, amountOrTokenId: 10 };
+    const toFulfill = { asset: highAddress, amountOrTokenId: 1 };
+    const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour later
+
+    // Create 10 orders
+    for (let i = 0; i < 10; i++) {
+      await marketplace.connect(seller).list(toSell, toFulfill, deadline);
+      //console.log(`Listed order ${i}: ${await marketplace.orders(i)}`);
+    }
+
+    // Fulfill 2 orders
+    await usdc.connect(seller).approve(marketplace.getAddress(), 2000);
+    await high.connect(buyer).approve(marketplace.getAddress(), 1000);
+    await marketplace
+      .connect(buyer)
+      .fulfill(1, { value: ethers.parseEther("1") });
+    await marketplace
+      .connect(buyer)
+      .fulfill(3, { value: ethers.parseEther("1") });
+
+    // // Log
+    // for (let i = 0; i < 10; i++) {
+    //   console.log(`Current orders${i + 1}: , ${await marketplace.orders(i)}`);
+    // }
+  }
 
   describe("OracleHandler", function () {
     it("Should revert when priceFeed is the zero address in setChainlinkPriceFeed", async function () {
