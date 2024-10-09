@@ -534,7 +534,7 @@ describe("Marketplace Contract", function () {
         marketplace
           .connect(buyer)
           .fulfill(1, { value: ethers.parseEther("0.5") })
-      ).to.be.revertedWith("ERC721 transfer failed");
+      ).to.be.revertedWith("ERC721: transfer caller is not owner nor approved");
     });
 
     it("Should revert when ERC20 transfer fails", async function () {
@@ -554,7 +554,7 @@ describe("Marketplace Contract", function () {
         marketplace
           .connect(buyer)
           .fulfill(1, { value: ethers.parseEther("0.5") })
-      ).to.be.revertedWith("ERC20 transfer failed");
+      ).to.be.revertedWith("ERC20: transfer amount exceeds allowance");
     });
   });
 

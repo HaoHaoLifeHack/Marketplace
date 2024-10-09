@@ -93,25 +93,13 @@ contract Marketplace is IMarketplace {
         address to
     ) internal {
         if (_isERC721(item.asset)) {
-            try
-                IERC721(item.asset).safeTransferFrom(
-                    from,
-                    to,
-                    item.amountOrTokenId
-                )
-            {
-                // Transfer successful
-            } catch {
-                revert("ERC721 transfer failed");
-            }
+            IERC721(item.asset).safeTransferFrom(
+                from,
+                to,
+                item.amountOrTokenId
+            );
         } else {
-            try
-                IERC20(item.asset).transferFrom(from, to, item.amountOrTokenId)
-            {
-                // Transfer successful
-            } catch {
-                revert("ERC20 transfer failed");
-            }
+            IERC20(item.asset).transferFrom(from, to, item.amountOrTokenId);
         }
     }
 
