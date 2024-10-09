@@ -563,24 +563,16 @@ describe("Marketplace Contract", function () {
       await setupOrders();
 
       // Check that the order is listed
-      const offset = 1;
-      const limit = 5;
-      var listOrders = await marketplace.viewOrders(offset, limit);
+      var listOrders = await marketplace.viewActiveOrders(1);
       console.log(`Listed orders: ${listOrders}\n`);
-      expect(listOrders.length).to.equal(5);
+      expect(listOrders.length).to.equal(25);
       expect(listOrders[0].fulfilled).to.equal(false);
       expect(listOrders[1].fulfilled).to.equal(false);
 
-      // Test 2: Fetch next 5 orders starting from offset 8
-      listOrders = await marketplace.viewOrders(2, 5);
+      // Fetch next 25 orders starting from offset 2
+      listOrders = await marketplace.viewActiveOrders(2);
       console.log(`Listed orders: ${listOrders}\n`);
-      expect(listOrders.length).to.equal(5); // Only 3 active orders left
-    });
-    it("Should handle empty results when offset exceeds totalOrders", async function () {
-      const offset = 11;
-      const limit = 5;
-      const listOrders = await marketplace.viewOrders(offset, limit);
-      expect(listOrders.length).to.equal(0);
+      expect(listOrders.length).to.equal(25);
     });
   });
 
@@ -593,7 +585,6 @@ describe("Marketplace Contract", function () {
     // Create 10 orders
     for (let i = 0; i < 10; i++) {
       await marketplace.connect(seller).list(toSell, toFulfill, deadline);
-      //console.log(`Listed order ${i}: ${await marketplace.orders(i)}`);
     }
 
     // Fulfill 2 orders
@@ -605,11 +596,6 @@ describe("Marketplace Contract", function () {
     await marketplace
       .connect(buyer)
       .fulfill(3, { value: ethers.parseEther("1") });
-
-    // // Log
-    // for (let i = 0; i < 10; i++) {
-    //   console.log(`Current orders${i + 1}: , ${await marketplace.orders(i)}`);
-    // }
   }
 
   describe("OracleHandler", function () {

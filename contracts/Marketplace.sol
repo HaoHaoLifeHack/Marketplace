@@ -11,8 +11,9 @@ contract Marketplace is IMarketplace {
     address owner;
     uint256 private _orderCounter; //For eid counter
     mapping(uint256 => Order) public orders; // Map eid to Order
-    uint256 public platformFeePercentage = 500; //5.00%
     OracleHandler public oracleHandler;
+    uint256 public constant PLATFORM_FEE_BPS = 500; // 5.00% in basis points
+    uint256 public constant PRECISION = 1e7; // Precision factor to simulate decimals
 
     event OrderCreated(
         uint256 eid,
@@ -71,7 +72,8 @@ contract Marketplace is IMarketplace {
         uint256 priceInETH = oracleHandler.getLatestPriceInETH(
             order.toFulfill.asset
         );
-        platformFee = (priceInETH * platformFeePercentage) / 10000;
+        // Fee calculation
+        platformFee = (priceInETH * PLATFORM_FEE_BPS) / PRECISION;
         require(msg.value >= platformFee, "Insufficient ETH for platform fee");
 
         // Handle asset transfer from seller to buyer
@@ -118,10 +120,10 @@ contract Marketplace is IMarketplace {
         return isSupport;
     }
 
-    function viewOrders(
-        uint256 offset,
-        uint256 limit
+    function viewActiveOrders(
+        uint256 offset
     ) external view returns (Order[] memory) {
+        uint256 limit = 25;
         uint256 totalOrders = _orderCounter;
 
         // Create an array for the active orders with size up to the limit
@@ -135,14 +137,7 @@ contract Marketplace is IMarketplace {
                 count++;
             }
         }
-
-        // Adjust the size of the returned array if count < limit
-        Order[] memory result = new Order[](count);
-        for (uint256 j = 0; j < count; j++) {
-            result[j] = activeOrders[j];
-        }
-
-        return result;
+        return activeOrders;
     }
 
     function withdraw() external onlyOwner {
