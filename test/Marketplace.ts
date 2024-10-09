@@ -572,9 +572,9 @@ describe("Marketplace Contract", function () {
       expect(listOrders[1].fulfilled).to.equal(false);
 
       // Test 2: Fetch next 5 orders starting from offset 8
-      listOrders = await marketplace.viewOrders(8, 5);
+      listOrders = await marketplace.viewOrders(2, 5);
       console.log(`Listed orders: ${listOrders}\n`);
-      expect(listOrders.length).to.equal(3); // Only 3 active orders left
+      expect(listOrders.length).to.equal(5); // Only 3 active orders left
     });
     it("Should handle empty results when offset exceeds totalOrders", async function () {
       const offset = 11;

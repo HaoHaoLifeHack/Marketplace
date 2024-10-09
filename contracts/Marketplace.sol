@@ -61,7 +61,7 @@ contract Marketplace is IMarketplace {
     }
 
     function fulfill(uint256 eid) external payable override {
-        Order storage order = orders[eid];
+        Order memory order = orders[eid];
         require(!order.fulfilled, "Order already fulfilled");
         require(block.timestamp <= order.deadline, "Order expired");
 
@@ -81,7 +81,7 @@ contract Marketplace is IMarketplace {
         _handleAssetTransfer(order.toFulfill, msg.sender, order.seller);
 
         // Mark the order as fulfilled only after both transfers succeed
-        order.fulfilled = true;
+        orders[eid].fulfilled = true;
 
         emit OrderFulfilled(eid, msg.sender, platformFee);
     }
