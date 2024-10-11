@@ -12,9 +12,9 @@ contract Marketplace is IMarketplace {
     uint256 private _orderCounter; //For eid counter
     mapping(uint256 => Order) public orders; // Map eid to Order
     OracleHandler public oracleHandler;
-    uint256 public constant PLATFORM_FEE_BPS = 500; // 5.00% in basis points
-    uint256 public constant PRECISION = 1e7; // Precision factor to simulate decimals
-
+    uint256 public constant PLATFORM_FEE_BPS = 5; // 5.00% in basis points
+    uint256 public constant FACTOR = 100; // Precision factor to simulate decimals
+    uint256 private constant LIMIT = 25;
     event OrderCreated(
         uint256 eid,
         address seller,
@@ -73,7 +73,7 @@ contract Marketplace is IMarketplace {
             order.toFulfill.asset
         );
         // Fee calculation
-        platformFee = (priceInETH * PLATFORM_FEE_BPS) / PRECISION;
+        platformFee = (priceInETH * PLATFORM_FEE_BPS * FACTOR) / (FACTOR * 100);
         require(msg.value >= platformFee, "Insufficient ETH for platform fee");
 
         // Handle asset transfer from seller to buyer
@@ -123,15 +123,14 @@ contract Marketplace is IMarketplace {
     function viewActiveOrders(
         uint256 offset
     ) external view returns (Order[] memory) {
-        uint256 limit = 25;
         uint256 totalOrders = _orderCounter;
 
         // Create an array for the active orders with size up to the limit
-        Order[] memory activeOrders = new Order[](limit);
+        Order[] memory activeOrders = new Order[](LIMIT);
         uint256 count = 0;
 
         // Loop through the orders starting from the offset
-        for (uint256 i = offset; i <= totalOrders && count < limit; i++) {
+        for (uint256 i = offset; i <= totalOrders && count < LIMIT; i++) {
             if (!orders[i].fulfilled) {
                 activeOrders[count] = orders[i];
                 count++;
