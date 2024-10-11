@@ -73,7 +73,7 @@ contract Marketplace is IMarketplace {
             order.toFulfill.asset
         );
         // Fee calculation
-        platformFee = (priceInETH * PLATFORM_FEE_BPS * FACTOR) / (FACTOR * 100);
+        platformFee = (priceInETH * PLATFORM_FEE_BPS * FACTOR) / (100 * FACTOR);
         require(msg.value >= platformFee, "Insufficient ETH for platform fee");
 
         // Handle asset transfer from seller to buyer
