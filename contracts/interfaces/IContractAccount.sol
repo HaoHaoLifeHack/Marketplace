@@ -1,12 +1,13 @@
-// // SPDX-License-Identifier: UNLICENSED
-// pragma solidity ^0.8.24;
+// SPDX-License-Identifier: UNLICENSED
 
-// interface ContractAccount {
-//     function owner() external view returns (address);
+pragma solidity ^0.8.24;
 
-//     function executeTx(
-//         address to,
-//         bytes memory data,
-//         uint256 value
-//     ) public payable;
-// }
+interface IContractAccount {
+    function owner() external view returns (address);
+
+    function execute(
+        address to,
+        bytes memory data,
+        uint256 value
+    ) external payable;
+}

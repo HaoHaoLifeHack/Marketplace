@@ -5,29 +5,29 @@ pragma solidity ^0.8.24;
 // this template could be modified in any kind of form
 
 interface IMarketplace {
-    // the structure of this could be changed
+    //the structure of this could be changed
     struct Item {
         address asset;
         uint256 amountOrTokenId;
     }
-
+    struct Trigger {
+        address daoAddress;
+        bytes data;
+    }
     struct Order {
         uint256 eid;
         address seller;
         address buyer;
-        Item toSell;
+        Trigger toSell;
         Item toFulfill;
         bool fulfilled;
         uint256 deadline;
     }
-
-    function list(
-        Item memory toSell,
-        Item memory toFulfill,
-        uint256 deadline
-    ) external;
-
-    function cancel(uint256 eid) external;
-
-    function fulfill(uint256 eid) external payable;
+    // function list(
+    //     Item memory toSell,
+    //     Item memory toFulfill,
+    //     uint256 deadline
+    // ) external;
+    // function cancel(uint256 eid) external;
+    // function fulfill(uint256 eid) external payable;
 }
