@@ -17,20 +17,24 @@ contract Marketplace is IMarketplace {
     address owner;
     uint256 private _orderCounter; //For eid counter
     mapping(uint256 => Order) public orders; // Map eid to Order
-    mapping(bytes32 => bool) public cancelOrders; //Map orderHash to bool
+    mapping(bytes32 => bool) public canceledOrders; //Map orderHash to bool
+    mapping(bytes32 => bool) public fulfilledOrders; //Map orderHash to bool
+
     OracleHandler public oracleHandler;
     uint256 public constant PLATFORM_FEE_BPS = 5; // 5.00% in basis points
     uint256 public constant FACTOR = 100; // Precision factor to simulate decimals
     uint256 private constant LIMIT = 25;
 
     event OrderCancelled(bytes32 indexed orderHash);
+    event AllOrdersCancelled(string indexed message);
     event OrderFulfilled(
-        uint256 indexed eid,
+        bytes32 indexed orderHash,
         address indexed buyer,
-        uint256 indexed indexedfeeInETH
+        uint256 indexed feeInETH
     );
     event Withdraw(address indexed receiver, uint256 amount);
     event RecoveredSeller(string message, address indexed recoveredSeller);
+    event TestResult(string indexed title, bool indexed result);
 
     constructor(OracleHandler _oracleHandler) {
         owner = msg.sender;
@@ -46,31 +50,17 @@ contract Marketplace is IMarketplace {
         bytes32 orderHash = getOrderHash(order);
         address recoveredSeller = recoverSigner(orderHash, sellerSignature);
         require(recoveredSeller == order.seller, "Only seller can cancel");
-        cancelOrders[orderHash] = true;
+        canceledOrders[orderHash] = true;
 
         emit OrderCancelled(orderHash);
-        return cancelOrders[orderHash] == true;
+        return canceledOrders[orderHash] == true;
     }
 
     // Seller cancels their own order
-    function cancelMerkleOrder(
-        Order memory order,
-        bytes memory sellerSignature,
-        bytes32[] calldata merkleProof
-    ) external {
-        // TODO: To test which require is the most cheap way
-        require(!order.fulfilled, "Order already fulfilled");
-        bytes32 orderHash = getOrderHash(order);
-        require(
-            merkleRoots[order.seller] ==
-                keccak256(abi.encodePacked(merkleProof)),
-            "Invalid merkle proof"
-        );
-        address recoveredSeller = recoverSigner(orderHash, sellerSignature);
-        require(recoveredSeller == order.seller, "Only seller can cancel");
-        cancelOrders[orderHash] = true;
-
-        emit OrderCancelled(orderHash);
+    function cancelAllOrders() external {
+        require(merkleRoots[msg.sender] != 0, "The Seller has no order yet");
+        updateMerkleRoot("0x0");
+        emit AllOrdersCancelled("All orders cancelled");
     }
 
     // Buyer brings the signed order
@@ -78,11 +68,11 @@ contract Marketplace is IMarketplace {
         Order memory order,
         bytes memory sellerSignature
     ) external payable {
-        require(!order.fulfilled, "Order already fulfilled");
         require(block.timestamp <= order.deadline, "Order expired");
 
         bytes32 orderHash = getOrderHash(order);
-        require(cancelOrders[orderHash] == false, "Order not cancelled");
+        require(!fulfilledOrders[orderHash], "Order already fulfilled");
+        require(!canceledOrders[orderHash], "Order not cancelled");
 
         address recoveredSeller = recoverSigner(orderHash, sellerSignature);
 
@@ -108,8 +98,67 @@ contract Marketplace is IMarketplace {
         // Handle asset transfers
         _handleAssetTransfer(order.toFulfill, order.buyer, order.seller);
 
+        // Fulfill the order
+        fulfilledOrders[orderHash] = true;
+
         // Emit order fulfillment event
-        emit OrderFulfilled(_orderCounter++, msg.sender, 0); // Example fee set to 0 for simplicity
+        emit OrderFulfilled(orderHash, order.buyer, 0); //set platformfee to 0 for testing
+    }
+
+    // Buyer brings the signed order
+    function fulfillOffchainOrderWithMerkleProof(
+        Order memory order,
+        bytes memory sellerSignature,
+        bytes32[] calldata merkleProof
+    ) external payable {
+        require(block.timestamp <= order.deadline, "Order expired");
+        bytes32 orderHash = getOrderHash(order);
+        require(!fulfilledOrders[orderHash], "Order already fulfilled");
+        require(!canceledOrders[orderHash], "Order not cancelled");
+
+        address recoveredSeller = recoverSigner(orderHash, sellerSignature);
+
+        bool verifyResult = _verifyMerkleProof(
+            merkleProof,
+            merkleRoots[recoveredSeller],
+            orderHash
+        );
+        emit TestResult("verifyResult: ", verifyResult);
+
+        // TODO: cannot verify merkle proof
+        require(
+            _verifyMerkleProof(
+                merkleProof,
+                merkleRoots[recoveredSeller],
+                orderHash
+            ),
+            "Invalid merkle proof"
+        );
+        // Ensure the recovered address matches the seller in the order
+        require(recoveredSeller == order.seller, "Invalid signature");
+
+        // Platform fee
+        uint256 platformFee;
+
+        // First fetch the price in ETH to calculate platform fee
+        uint256 priceInETH = oracleHandler.getLatestPriceInETH(
+            order.toFulfill.asset
+        );
+
+        // Fee calculation
+        platformFee = (priceInETH * PLATFORM_FEE_BPS * FACTOR) / (100 * FACTOR);
+        require(msg.value >= platformFee, "Insufficient ETH for platform fee");
+
+        // TODO: Trigger order to execute voting by ContractAccount
+
+        // Handle asset transfers
+        _handleAssetTransfer(order.toFulfill, order.buyer, order.seller);
+
+        // Fulfill the order
+        fulfilledOrders[orderHash] = true;
+
+        // Emit order fulfillment event
+        emit OrderFulfilled(orderHash, order.buyer, 0); //set platformfee to 0 for testing
     }
 
     // Generates the order hash
@@ -118,6 +167,7 @@ contract Marketplace is IMarketplace {
             keccak256(
                 abi.encodePacked(
                     order.eid,
+                    order.buyer,
                     order.seller,
                     order.toSell.daoAddress,
                     order.toSell.data,
@@ -153,13 +203,17 @@ contract Marketplace is IMarketplace {
             );
     }
 
+    function updateMerkleRoot(bytes32 newMerkleRoot) public {
+        merkleRoots[msg.sender] = newMerkleRoot;
+    }
+
     // Verify merkle proof
-    function verifyMerkleProof(
+    function _verifyMerkleProof(
         bytes32[] memory proof,
         bytes32 root,
         bytes32 leaf
-    ) external pure returns (bool) {
-        return MerkleProof.verify(proof, root, leaf);
+    ) internal pure returns (bool) {
+        return proof.verify(root, leaf);
     }
 
     //function verifyOrderSignature(address seller, bytes32 orderHash, bytes memory sellerSignature)

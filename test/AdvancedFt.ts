@@ -15,11 +15,15 @@ import { IERC20 } from "../typechain-types/@openzeppelin/contracts/token/ERC20/I
 import { IERC721 } from "../typechain-types/@openzeppelin/contracts/token/ERC721/IERC721";
 import { AddressLike } from "ethers";
 import { boolean } from "hardhat/internal/core/params/argumentTypes";
+import { StandardMerkleTree } from "@openzeppelin/merkle-tree";
 
 describe("Marketplace Contract", function () {
   let marketplace: Marketplace;
   let oracleHandler: OracleHandler;
   let nftPriceFeed: NFTPriceFeed;
+  let owner: any;
+  let seller: any;
+  let buyer: any;
   let high: any;
   let usdc: any;
   let bayc: any;
@@ -34,6 +38,7 @@ describe("Marketplace Contract", function () {
   let baycAddress: AddressLike;
   let azukiAddress: AddressLike;
   let offchainOrderHash: any;
+  let testCalldata: any;
   const USDC_ETH_PRICEFEED_ADDRESS: AddressLike =
     "0x986b5E1e1755e3C2440e960477f25201B0a8bbD4";
   const USDT_ETH_PRICEFEED_ADDRESS: AddressLike =
@@ -69,6 +74,10 @@ describe("Marketplace Contract", function () {
     // Address
     sellerAddress = await sellerWallet.address;
     buyerAddress = await buyerWallet.address;
+
+    // Signer
+    seller = await ethers.getSigner(sellerWallet.address);
+    buyer = await ethers.getSigner(buyerWallet.address);
 
     // Deploy OracleHandler
     const OracleHandler = await ethers.getContractFactory("OracleHandler");
@@ -211,12 +220,12 @@ describe("Marketplace Contract", function () {
     // Test low-level calldata
     const proposalId = 1;
     const amount = 10;
-    const externalCalldata = marketplace.interface.encodeFunctionData("test", [
+    testCalldata = marketplace.interface.encodeFunctionData("test", [
       proposalId,
       amount,
     ]);
 
-    console.log("offchain-gen trigger external calldata:", externalCalldata);
+    //console.log("offchain-gen trigger external calldata:", testCalldata);
 
     // Define the order data
     offchainOrder = {
@@ -225,7 +234,7 @@ describe("Marketplace Contract", function () {
       seller: sellerAddress,
       toSell: {
         daoAddress: sellerAddress,
-        data: externalCalldata,
+        data: testCalldata,
       },
       toFulfill: {
         asset: "0x71ab77b7dbb4fa7e017bc15090b2163221420282", // high
@@ -247,18 +256,102 @@ describe("Marketplace Contract", function () {
       const receipt = await cancelOrder(offchainOrder, sellerSignature);
       //console.log("Receipt:", receipt);
 
-      expect(await marketplace.cancelOrders(offchainOrderHash)).to.be.true;
+      expect(await marketplace.canceledOrders(offchainOrderHash)).to.be.true;
     });
 
     it("Should emit OrderCancelled event when an order is cancelled", async function () {
       const result = await cancelOrder(offchainOrder, sellerSignature);
-      console.log("Cancel Result:", result);
+      //console.log("Cancel Result:", result);
 
-      await expect(marketplace.cancelOrders(offchainOrderHash))
+      await expect(await cancelOrder(offchainOrder, sellerSignature))
         .to.emit(marketplace, "OrderCancelled")
         .withArgs(offchainOrderHash); // Check that the event is emitted with the correct argument
     });
   });
+
+  describe("Fulfill order", function () {
+    it("Should verify on-chain", async function () {
+      // Raw order
+      //console.log("Raw Order Data:", offchainOrder);
+
+      // Call the contract's fulfillOffchainOrder function
+      const receipt = await fulfillOrder(offchainOrder, sellerSignature);
+      await expect(await marketplace.fulfilledOrders(offchainOrderHash)).to.be
+        .true;
+    });
+    it("Should emit OrderFulfilled event when an order is fulfilled", async function () {
+      await expect(await fulfillOrder(offchainOrder, sellerSignature))
+        .to.emit(marketplace, "OrderFulfilled")
+        .withArgs(offchainOrderHash, offchainOrder.buyer, 0); // Check that the event is emitted with the correct argument
+    });
+  });
+
+  describe("List order with merkle tree", function () {
+    it("Should update merkle root on-chain", async function () {
+      const fulfilled = false;
+      const tree = await constructingMerkleTree(fulfilled);
+
+      // User confirm to upload the orders to the chain
+      await marketplace.connect(seller).updateMerkleRoot(tree.root);
+
+      expect(await marketplace.merkleRoots(sellerAddress)).to.equal(tree.root);
+    });
+  });
+
+  describe("Cancel order constructed by merkle tree", function () {
+    it("Should update merkle root on-chain", async function () {
+      const fulfilled = false;
+      const tree = await constructingMerkleTree(fulfilled);
+
+      // User confirm to upload the orders to the chain
+      await marketplace.connect(seller).updateMerkleRoot(tree.root);
+
+      expect(await marketplace.merkleRoots(sellerAddress)).to.equal(tree.root);
+    });
+    it("Should cancel all orders on-chain", async function () {
+      const fulfilled = false;
+      const tree = await constructingMerkleTree(fulfilled);
+
+      // User confirm to upload the orders to the chain
+      await marketplace.connect(seller).updateMerkleRoot(tree.root);
+
+      // Cancel all orders
+      await marketplace.connect(seller).cancelAllOrders();
+
+      await expect(
+        fulfillOrderWithMerkleProof(
+          offchainOrder,
+          sellerSignature,
+          tree.getProof(0)
+        )
+      ).to.be.revertedWith("Invalid merkle proof");
+    });
+  });
+
+  describe("Fulfill order constructed by merkle tree", function () {
+    it("Should fulfill order with merkle proof on-chain", async function () {
+      var fulfilled = false;
+      const tree = await constructingMerkleTree(fulfilled);
+
+      console.log("merkle tree: ", tree);
+      console.log("offchain orderHash: ", offchainOrderHash);
+      // User confirm to upload the orders to the chain
+      await marketplace.connect(seller).updateMerkleRoot(tree.root);
+      expect(await marketplace.merkleRoots(sellerAddress)).to.equal(tree.root);
+      console.log("merkle proof 0: ", tree.getProof(0));
+
+      // fulfill
+      const fulfillTx = await fulfillOrderWithMerkleProof(
+        offchainOrder,
+        sellerSignature,
+        tree.getProof(0)
+      );
+      console.log("fulfill tx: ", fulfillTx);
+
+      //expect(await marketplace.fulfilledOrders(offchainOrderHash)).to.be.true;
+    });
+  });
+
   // Call the contract's cancel function
   async function cancelOrder(order: any, sellerSignature: any) {
     const tx = await marketplace.cancelOrder(order, sellerSignature);
@@ -268,17 +361,6 @@ describe("Marketplace Contract", function () {
     console.log("Order cancelled!");
     return tx;
   }
-
-  describe("Off-chain sign & On-chain fulfill", function () {
-    it("Should verify on-chain", async function () {
-      // Raw order
-      //console.log("Raw Order Data:", offchainOrder);
-
-      // Call the contract's fulfillOffchainOrder function
-      const receipt = await fulfillOrder(offchainOrder, sellerSignature);
-      //console.log("Receipt:", receipt);
-    });
-  });
 
   // Call the contract's fulfillOffchainOrder function
   async function fulfillOrder(order: any, sellerSignature: any) {
@@ -290,6 +372,26 @@ describe("Marketplace Contract", function () {
     console.log("Transaction hash:", tx.hash);
     await tx.wait(); // Wait for the transaction to be mined
     console.log("Order fulfilled!");
+    return tx;
+  }
+  async function fulfillOrderWithMerkleProof(
+    order: any,
+    sellerSignature: any,
+    proof: any
+  ) {
+    await setupAllowance();
+    const tx = await marketplace.fulfillOffchainOrderWithMerkleProof(
+      order,
+      sellerSignature,
+      proof,
+      {
+        value: ethers.parseEther("0.1"), // Example value for payment
+      }
+    );
+
+    console.log("Transaction hash:", tx.hash);
+    await tx.wait(); // Wait for the transaction to be mined
+    console.log("Order fulfilled with merkle proof!");
     return tx;
   }
   // Sign the order hash with the seller's private key
@@ -306,5 +408,82 @@ describe("Marketplace Contract", function () {
     await high
       .connect(await ethers.getSigner(buyerWallet.address))
       .approve(marketplace.getAddress(), 1000);
+  }
+
+  async function constructingMerkleTree(fulfilled: boolean) {
+    const orders = fulfilled
+      ? await setupFulfilledOrders()
+      : await setup10NewOrders(); // Assume this returns an array of `order` objects
+
+    const leaves = orders.map((order) => [
+      order.eid,
+      order.buyer,
+      order.seller,
+      order.toSell.daoAddress,
+      order.toSell.data,
+      order.toFulfill.asset,
+      order.toFulfill.amountOrTokenId,
+      order.deadline,
+      order.fulfilled,
+    ]);
+    const leafEncoding = [
+      "uint256",
+      "address",
+      "address",
+      "address",
+      "bytes",
+      "address",
+      "uint256",
+      "uint256",
+      "bool",
+    ];
+    const tree = StandardMerkleTree.of(leaves, leafEncoding);
+    return tree;
+  }
+  async function setup10NewOrders() {
+    let orders = [];
+    for (let i = 0; i < 10; i++) {
+      const order = {
+        eid: i + 1,
+        buyer: buyerAddress,
+        seller: sellerAddress,
+        toSell: {
+          daoAddress: sellerAddress,
+          data: testCalldata,
+        },
+        toFulfill: {
+          asset: highAddress, // high
+          amountOrTokenId: 10, // Amount (ERC20) or Token ID (ERC721)
+        },
+        deadline: Math.floor(Date.now() / 1000) + 3600, // 1-hour expiration
+        fulfilled: false,
+      };
+
+      orders.push(order);
+    }
+    return orders;
+  }
+  async function setupFulfilledOrders() {
+    let orders = [];
+    for (let i = 0; i < 4; i++) {
+      const order = {
+        eid: i + 1,
+        buyer: buyerAddress,
+        seller: sellerAddress,
+        toSell: {
+          daoAddress: sellerAddress,
+          data: testCalldata,
+        },
+        toFulfill: {
+          asset: highAddress, // high
+          amountOrTokenId: 10, // Amount (ERC20) or Token ID (ERC721)
+        },
+        deadline: Math.floor(Date.now() / 1000) + 3600, // 1-hour expiration
+        fulfilled: true,
+      };
+
+      orders.push(order);
+    }
+    return orders;
   }
 });

@@ -5,9 +5,10 @@
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
     "hardhat": "^2.22.12",
     "hardhat-deploy": "^0.12.4",
-    "hardhat-gas-reporter": "^2.2.1"
+    "hardhat-gas-reporter": "^1.0.10"
   },
   "dependencies": {
+    "@openzeppelin/merkle-tree": "^1.0.7",
     "dotenv": "^16.4.5"
   }
 }
