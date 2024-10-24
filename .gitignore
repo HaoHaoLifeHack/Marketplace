@@ -11,6 +11,9 @@ node_modules
 # Out files
 /out
 
+# Deployment files
+/deployments
+
 # TypeChain files
 /typechain
 /typechain-types

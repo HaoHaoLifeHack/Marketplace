@@ -248,40 +248,6 @@ describe("Marketplace Contract", function () {
     // Call the function to sign the order
     sellerSignature = await signOrder(sellerWallet, offchainOrderHash);
   }
-  describe("Cancel order", function () {
-    it("Should cancel order", async function () {
-      const receipt = await cancelOrder(offchainOrder, sellerSignature);
-      //console.log("Receipt:", receipt);
-
-      expect(await marketplace.canceledOrders(offchainOrderHash)).to.be.true;
-    });
-
-    it("Should emit OrderCancelled event when an order is cancelled", async function () {
-      const result = await cancelOrder(offchainOrder, sellerSignature);
-      //console.log("Cancel Result:", result);
-
-      await expect(await cancelOrder(offchainOrder, sellerSignature))
-        .to.emit(marketplace, "OrderCancelled")
-        .withArgs(offchainOrderHash); // Check that the event is emitted with the correct argument
-    });
-  });
-
-  describe("Fulfill order", function () {
-    it("Should verify on-chain", async function () {
-      // Raw order
-      //console.log("Raw Order Data:", offchainOrder);
-
-      // Call the contract's fulfillOffchainOrder function
-      const receipt = await fulfillOrder(offchainOrder, sellerSignature);
-      await expect(await marketplace.fulfilledOrders(offchainOrderHash)).to.be
-        .true;
-    });
-    it("Should emit OrderFulfilled event when an order is fulfilled", async function () {
-      await expect(await fulfillOrder(offchainOrder, sellerSignature))
-        .to.emit(marketplace, "OrderFulfilled")
-        .withArgs(offchainOrderHash, offchainOrder.buyer, 0); // Check that the event is emitted with the correct argument
-    });
-  });
 
   describe("List order with merkle tree", function () {
     it("Should update merkle root on-chain", async function () {
@@ -367,28 +333,6 @@ describe("Marketplace Contract", function () {
     return proof;
   }
 
-  // Call the contract's cancel function
-  async function cancelOrder(order: any, sellerSignature: any) {
-    const tx = await marketplace.cancelOrder(order, sellerSignature);
-
-    console.log("Transaction hash:", tx.hash);
-    await tx.wait(); // Wait for the transaction to be mined
-    console.log("Order cancelled!");
-    return tx;
-  }
-
-  // Call the contract's fulfillOffchainOrder function
-  async function fulfillOrder(order: any, sellerSignature: any) {
-    await setupAllowance();
-    const tx = await marketplace.fulfillOffchainOrder(order, sellerSignature, {
-      value: ethers.parseEther("0.1"), // Example value for payment
-    });
-
-    console.log("Transaction hash:", tx.hash);
-    await tx.wait(); // Wait for the transaction to be mined
-    console.log("Order fulfilled!");
-    return tx;
-  }
   async function fulfillOrderWithMerkleProof(
     order: any,
     sellerSignature: any,

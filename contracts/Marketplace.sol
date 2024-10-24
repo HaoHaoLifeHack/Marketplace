@@ -165,16 +165,20 @@ contract Marketplace is IMarketplace {
     function getOrderHash(Order memory order) public pure returns (bytes32) {
         return
             keccak256(
-                abi.encodePacked(
-                    order.eid,
-                    order.buyer,
-                    order.seller,
-                    order.toSell.daoAddress,
-                    order.toSell.data,
-                    order.toFulfill.asset,
-                    order.toFulfill.amountOrTokenId,
-                    order.deadline,
-                    order.fulfilled
+                bytes.concat(
+                    keccak256(
+                        abi.encode(
+                            order.eid,
+                            order.buyer,
+                            order.seller,
+                            order.toSell.daoAddress,
+                            order.toSell.data,
+                            order.toFulfill.asset,
+                            order.toFulfill.amountOrTokenId,
+                            order.deadline,
+                            order.fulfilled
+                        )
+                    )
                 )
             );
     }
@@ -250,24 +254,24 @@ contract Marketplace is IMarketplace {
         return isSupport;
     }
 
-    function viewActiveOrders(
-        uint256 offset
-    ) external view returns (Order[] memory) {
-        uint256 totalOrders = _orderCounter;
+    // function viewActiveOrders(
+    //     uint256 offset
+    // ) external view returns (Order[] memory) {
+    //     uint256 totalOrders = _orderCounter;
 
-        // Create an array for the active orders with size up to the limit
-        Order[] memory activeOrders = new Order[](LIMIT);
-        uint256 count = 0;
+    //     // Create an array for the active orders with size up to the limit
+    //     Order[] memory activeOrders = new Order[](LIMIT);
+    //     uint256 count = 0;
 
-        // Loop through the orders starting from the offset
-        for (uint256 i = offset; i <= totalOrders && count < LIMIT; i++) {
-            if (!orders[i].fulfilled) {
-                activeOrders[count] = orders[i];
-                count++;
-            }
-        }
-        return activeOrders;
-    }
+    //     // Loop through the orders starting from the offset
+    //     for (uint256 i = offset; i <= totalOrders && count < LIMIT; i++) {
+    //         if (!orders[i].fulfilled) {
+    //             activeOrders[count] = orders[i];
+    //             count++;
+    //         }
+    //     }
+    //     return activeOrders;
+    // }
 
     function withdraw() external onlyOwner {
         require(address(this).balance > 0, "No balance to withdraw");
