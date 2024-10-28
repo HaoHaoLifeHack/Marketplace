@@ -67,7 +67,7 @@ describe("Marketplace Contract", function () {
     high = await ethers.getContractAt("IERC20", highAddress);
 
     // Fork erc721
-    baycAddress = "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D"; //Unknown: 0xe2A83b15FC300D8457eB9E176f98d92a8FF40a49
+    baycAddress = "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D";
     azukiAddress = "0xed5af388653567af2f388e6224dc7c4b3241c544";
     bayc = await ethers.getContractAt("IERC721", baycAddress);
     azuki = await ethers.getContractAt("IERC721", azukiAddress);

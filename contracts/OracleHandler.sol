@@ -67,11 +67,17 @@ contract OracleHandler {
 }
 
 contract NFTPriceFeed is IPriceFeed {
-    function latestAnswer() external pure returns (uint256) {
-        return 10 ether;
+    uint256 public price = 10 ether;
+
+    function latestAnswer() external view returns (uint256) {
+        return price;
     }
 
     function decimals() external pure returns (uint8) {
         return 18;
+    }
+
+    function setPrice(uint256 _price) external {
+        price = _price;
     }
 }

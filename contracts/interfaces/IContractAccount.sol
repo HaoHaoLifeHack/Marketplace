@@ -6,8 +6,9 @@ interface IContractAccount {
     function owner() external view returns (address);
 
     function execute(
+        address seller,
         address to,
         bytes memory data,
         uint256 value
-    ) external payable;
+    ) external payable returns (bool);
 }

@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 interface IDAO {
     struct Proposal {
+        uint256 id;
         address executeAddr;
         uint256 amount;
         bytes data;

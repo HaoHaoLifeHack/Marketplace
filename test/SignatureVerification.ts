@@ -58,12 +58,10 @@ describe("Marketplace Contract", function () {
 
   async function deployMarketplaceFixture() {
     // Define the test wallet
-    const sellerPrivateKey =
-      "0xdf57089febbacf7ba0bc227dafbffa9fc08a93fdc68e1e42411a14efcf23656e"; // Account#19: 0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199
+    const sellerPrivateKey = process.env.SELLER_PRIVATE_KEY; // #19 address: 0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199
     sellerWallet = new ethers.Wallet(sellerPrivateKey);
 
-    const buyerPrivateKey =
-      "0xde9be858da4a475276426320d5e9262ecfc3ba460bfac56360bfa6c4c28b4ee0"; // Account#18: 0xdD2FD4581271e230360230F9337D5c0430Bf44C0
+    const buyerPrivateKey = process.env.BUYER_PRIVATE_KEY; // #18 address: 0xdD2FD4581271e230360230F9337D5c0430Bf44C0
     buyerWallet = new ethers.Wallet(buyerPrivateKey);
     console.log("seller address:", sellerWallet.address);
     console.log("buyer address:", buyerWallet.address);

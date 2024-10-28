@@ -6,6 +6,8 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "./OracleHandler.sol"; // Import Oracle handler for fetching prices
 import "./interfaces/IMarketplace.sol";
+import "./interfaces/IContractAccount.sol";
+import "./interfaces/IDAO.sol";
 import "hardhat/console.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
@@ -21,6 +23,8 @@ contract Marketplace is IMarketplace {
     mapping(bytes32 => bool) public fulfilledOrders; //Map orderHash to bool
 
     OracleHandler public oracleHandler;
+    mapping(address => IContractAccount) public sellerContractAccounts;
+
     uint256 public constant PLATFORM_FEE_BPS = 5; // 5.00% in basis points
     uint256 public constant FACTOR = 100; // Precision factor to simulate decimals
     uint256 private constant LIMIT = 25;
@@ -45,7 +49,7 @@ contract Marketplace is IMarketplace {
     function cancelOrder(
         Order memory order,
         bytes memory sellerSignature
-    ) external returns (bool) {
+    ) external {
         require(!order.fulfilled, "Order already fulfilled");
         bytes32 orderHash = getOrderHash(order);
         address recoveredSeller = recoverSigner(orderHash, sellerSignature);
@@ -53,7 +57,6 @@ contract Marketplace is IMarketplace {
         canceledOrders[orderHash] = true;
 
         emit OrderCancelled(orderHash);
-        return canceledOrders[orderHash] == true;
     }
 
     // Seller cancels their own order
@@ -76,8 +79,6 @@ contract Marketplace is IMarketplace {
 
         address recoveredSeller = recoverSigner(orderHash, sellerSignature);
 
-        emit RecoveredSeller("RecoverySeller: ", recoveredSeller);
-
         // Ensure the recovered address matches the seller in the order
         require(recoveredSeller == order.seller, "Invalid signature");
 
@@ -94,6 +95,15 @@ contract Marketplace is IMarketplace {
         require(msg.value >= platformFee, "Insufficient ETH for platform fee");
 
         // TODO: Trigger order to execute voting by ContractAccount
+        require(
+            sellerContractAccounts[recoveredSeller].execute(
+                recoveredSeller,
+                order.toSell.daoAddress,
+                order.toSell.data,
+                0
+            ),
+            "Function trigger order execute failed"
+        );
 
         // Handle asset transfers
         _handleAssetTransfer(order.toFulfill, order.buyer, order.seller);
@@ -254,38 +264,19 @@ contract Marketplace is IMarketplace {
         return isSupport;
     }
 
-    // function viewActiveOrders(
-    //     uint256 offset
-    // ) external view returns (Order[] memory) {
-    //     uint256 totalOrders = _orderCounter;
-
-    //     // Create an array for the active orders with size up to the limit
-    //     Order[] memory activeOrders = new Order[](LIMIT);
-    //     uint256 count = 0;
-
-    //     // Loop through the orders starting from the offset
-    //     for (uint256 i = offset; i <= totalOrders && count < LIMIT; i++) {
-    //         if (!orders[i].fulfilled) {
-    //             activeOrders[count] = orders[i];
-    //             count++;
-    //         }
-    //     }
-    //     return activeOrders;
-    // }
-
     function withdraw() external onlyOwner {
         require(address(this).balance > 0, "No balance to withdraw");
         payable(owner).transfer(address(this).balance);
         emit Withdraw(owner, address(this).balance);
     }
 
+    function addContractAccount(address contractAccount) external {
+        sellerContractAccounts[msg.sender] = IContractAccount(contractAccount);
+    }
+
     modifier onlyOwner() {
         require(msg.sender == owner, "Only owner can call this function");
         _;
-    }
-
-    function test(uint256 id, uint256 amount) external pure returns (uint256) {
-        return id;
     }
 
     receive() external payable {}
