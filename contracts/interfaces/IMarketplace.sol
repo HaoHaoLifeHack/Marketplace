@@ -14,6 +14,15 @@ interface IMarketplace {
         address daoAddress;
         bytes data;
     }
+    struct OrderBasic {
+        uint256 eid;
+        address seller;
+        address buyer;
+        Item toSell;
+        Item toFulfill;
+        bool fulfilled;
+        uint256 deadline;
+    }
     struct Order {
         uint256 eid;
         address seller;

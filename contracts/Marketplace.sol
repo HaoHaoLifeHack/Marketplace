@@ -18,12 +18,9 @@ contract Marketplace is IMarketplace {
     mapping(address => bytes32) public merkleRoots; //Seperate by the seller
     address owner;
     uint256 private _orderCounter; //For eid counter
-    mapping(uint256 => Order) public orders; // Map eid to Order
     mapping(bytes32 => bool) public canceledOrders; //Map orderHash to bool
     mapping(bytes32 => bool) public fulfilledOrders; //Map orderHash to bool
-
     OracleHandler public oracleHandler;
-    mapping(address => IContractAccount) public sellerContractAccounts;
 
     uint256 public constant PLATFORM_FEE_BPS = 5; // 5.00% in basis points
     uint256 public constant FACTOR = 100; // Precision factor to simulate decimals
@@ -69,8 +66,9 @@ contract Marketplace is IMarketplace {
     // Buyer brings the signed order
     function fulfillOffchainOrder(
         Order memory order,
-        bytes memory sellerSignature
-    ) external payable {
+        bytes memory sellerSignature,
+        address contractAccountAddress
+    ) public payable {
         require(block.timestamp <= order.deadline, "Order expired");
 
         bytes32 orderHash = getOrderHash(order);
@@ -81,6 +79,18 @@ contract Marketplace is IMarketplace {
 
         // Ensure the recovered address matches the seller in the order
         require(recoveredSeller == order.seller, "Invalid signature");
+
+        // Ensure the recovered address owned the contract account
+        IContractAccount contractAccount = IContractAccount(
+            contractAccountAddress
+        );
+        require(
+            contractAccount.owner() == recoveredSeller,
+            "Invalid contract account address"
+        );
+
+        // Mark the order as fulfilled before external calls
+        fulfilledOrders[orderHash] = true;
 
         // Platform fee
         uint256 platformFee;
@@ -94,9 +104,9 @@ contract Marketplace is IMarketplace {
         platformFee = (priceInETH * PLATFORM_FEE_BPS * FACTOR) / (100 * FACTOR);
         require(msg.value >= platformFee, "Insufficient ETH for platform fee");
 
-        // TODO: Trigger order to execute voting by ContractAccount
+        // Function trigger order
         require(
-            sellerContractAccounts[recoveredSeller].execute(
+            contractAccount.execute(
                 recoveredSeller,
                 order.toSell.daoAddress,
                 order.toSell.data,
@@ -108,9 +118,6 @@ contract Marketplace is IMarketplace {
         // Handle asset transfers
         _handleAssetTransfer(order.toFulfill, order.buyer, order.seller);
 
-        // Fulfill the order
-        fulfilledOrders[orderHash] = true;
-
         // Emit order fulfillment event
         emit OrderFulfilled(orderHash, order.buyer, 0); //set platformfee to 0 for testing
     }
@@ -119,8 +126,9 @@ contract Marketplace is IMarketplace {
     function fulfillOffchainOrderWithMerkleProof(
         Order memory order,
         bytes memory sellerSignature,
-        bytes32[] calldata merkleProof
-    ) external payable {
+        bytes32[] calldata merkleProof,
+        address contractAccountAddress
+    ) public payable {
         require(block.timestamp <= order.deadline, "Order expired");
         bytes32 orderHash = getOrderHash(order);
         require(!fulfilledOrders[orderHash], "Order already fulfilled");
@@ -128,14 +136,6 @@ contract Marketplace is IMarketplace {
 
         address recoveredSeller = recoverSigner(orderHash, sellerSignature);
 
-        bool verifyResult = _verifyMerkleProof(
-            merkleProof,
-            merkleRoots[recoveredSeller],
-            orderHash
-        );
-        emit TestResult("verifyResult: ", verifyResult);
-
-        // TODO: cannot verify merkle proof
         require(
             _verifyMerkleProof(
                 merkleProof,
@@ -144,8 +144,21 @@ contract Marketplace is IMarketplace {
             ),
             "Invalid merkle proof"
         );
+
         // Ensure the recovered address matches the seller in the order
         require(recoveredSeller == order.seller, "Invalid signature");
+
+        // Ensure the recovered address owned the contract account
+        IContractAccount contractAccount = IContractAccount(
+            contractAccountAddress
+        );
+        require(
+            contractAccount.owner() == recoveredSeller,
+            "Invalid contract account address"
+        );
+
+        // Mark the order as fulfilled before external calls
+        fulfilledOrders[orderHash] = true;
 
         // Platform fee
         uint256 platformFee;
@@ -159,13 +172,19 @@ contract Marketplace is IMarketplace {
         platformFee = (priceInETH * PLATFORM_FEE_BPS * FACTOR) / (100 * FACTOR);
         require(msg.value >= platformFee, "Insufficient ETH for platform fee");
 
-        // TODO: Trigger order to execute voting by ContractAccount
+        // Function trigger order
+        require(
+            contractAccount.execute(
+                recoveredSeller,
+                order.toSell.daoAddress,
+                order.toSell.data,
+                0
+            ),
+            "Function trigger order execute failed"
+        );
 
         // Handle asset transfers
         _handleAssetTransfer(order.toFulfill, order.buyer, order.seller);
-
-        // Fulfill the order
-        fulfilledOrders[orderHash] = true;
 
         // Emit order fulfillment event
         emit OrderFulfilled(orderHash, order.buyer, 0); //set platformfee to 0 for testing
@@ -183,6 +202,30 @@ contract Marketplace is IMarketplace {
                             order.seller,
                             order.toSell.daoAddress,
                             order.toSell.data,
+                            order.toFulfill.asset,
+                            order.toFulfill.amountOrTokenId,
+                            order.deadline,
+                            order.fulfilled
+                        )
+                    )
+                )
+            );
+    }
+
+    // Generates the order hash
+    function getOrderHashBasic(
+        OrderBasic memory order
+    ) public pure returns (bytes32) {
+        return
+            keccak256(
+                bytes.concat(
+                    keccak256(
+                        abi.encode(
+                            order.eid,
+                            order.buyer,
+                            order.seller,
+                            order.toSell.asset,
+                            order.toSell.amountOrTokenId,
                             order.toFulfill.asset,
                             order.toFulfill.amountOrTokenId,
                             order.deadline,
@@ -230,8 +273,6 @@ contract Marketplace is IMarketplace {
         return proof.verify(root, leaf);
     }
 
-    //function verifyOrderSignature(address seller, bytes32 orderHash, bytes memory sellerSignature)
-
     // Helper function to handle asset transfer
     function _handleAssetTransfer(
         Item memory item,
@@ -270,8 +311,69 @@ contract Marketplace is IMarketplace {
         emit Withdraw(owner, address(this).balance);
     }
 
-    function addContractAccount(address contractAccount) external {
-        sellerContractAccounts[msg.sender] = IContractAccount(contractAccount);
+    function sweepOrders(
+        OrderBasic[] memory orders,
+        bytes[] memory sellerSignatures
+    ) external payable {
+        uint256 totalPlatformFee;
+        uint256 totalSellAmount;
+        uint256 totalFulfillAmount;
+        // assuming all assets are the same
+        address toFulfillAsset = orders[0].toFulfill.asset;
+        address toSellAsset = orders[0].toSell.asset;
+
+        for (uint256 i = 0; i < orders.length; i++) {
+            OrderBasic memory order = orders[i];
+            bytes memory sellerSignature = sellerSignatures[i];
+
+            // Ensure order validity
+            require(block.timestamp <= order.deadline, "Order expired");
+
+            bytes32 orderHash = getOrderHashBasic(order);
+            require(!fulfilledOrders[orderHash], "Order already fulfilled");
+            require(!canceledOrders[orderHash], "Order already cancelled");
+
+            // Verify the seller's signature
+            address recoveredSeller = recoverSigner(orderHash, sellerSignature);
+            require(recoveredSeller == order.seller, "Invalid signature");
+
+            // Add up order values
+            totalSellAmount += order.toSell.amountOrTokenId;
+            totalFulfillAmount += order.toFulfill.amountOrTokenId;
+
+            // Platform fee calculation
+            uint256 priceInETH = oracleHandler.getLatestPriceInETH(
+                toFulfillAsset
+            );
+
+            uint256 fee = (priceInETH * PLATFORM_FEE_BPS * FACTOR) /
+                (100 * FACTOR);
+            totalPlatformFee += fee;
+
+            // Mark order as fulfilled
+            fulfilledOrders[orderHash] = true;
+            emit OrderFulfilled(orderHash, order.buyer, 0);
+        }
+
+        // Ensure sufficient ETH for the platform fee
+        require(
+            msg.value >= totalPlatformFee,
+            "Insufficient ETH for platform fee"
+        );
+
+        // Transfer combined sell amount
+        _handleAssetTransfer(
+            Item({asset: toSellAsset, amountOrTokenId: totalSellAmount}),
+            orders[0].seller,
+            msg.sender
+        );
+
+        // Transfer combined fulfill amount
+        _handleAssetTransfer(
+            Item({asset: toFulfillAsset, amountOrTokenId: totalFulfillAmount}),
+            msg.sender,
+            orders[0].seller
+        );
     }
 
     modifier onlyOwner() {

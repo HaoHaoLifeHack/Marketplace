@@ -135,11 +135,6 @@ describe("Marketplace Contract", function () {
     const contractAccountAddr = await contractAccount.getAddress();
     console.log(`ContractAccount address: ${contractAccountAddr}`);
     console.log(`ContractAccount owner: ${await contractAccount.owner()}`);
-    await marketplace.connect(seller).addContractAccount(contractAccountAddr);
-    console.log(
-      "ContractAccount added to marketplace:",
-      await marketplace.sellerContractAccounts(sellerAddress)
-    );
   }
   async function deploySimpleDAOFixture() {
     const SimpleDAO = await ethers.getContractFactory("SimpleDAO", seller);
@@ -461,6 +456,13 @@ describe("Marketplace Contract", function () {
 
   describe("Fulfill order constructed by merkle tree", function () {
     it("Should fulfill order with merkle proof on-chain", async function () {
+      await setupContractAccountForDAO(
+        sellerAddress,
+        contractAccount,
+        await simpleDAO.getAddress(),
+        usdc,
+        usdcInitAmount
+      );
       var fulfilled = false;
       const tree = await constructingMerkleTree(fulfilled);
 
@@ -481,6 +483,63 @@ describe("Marketplace Contract", function () {
       //console.log("fulfill tx: ", fulfillTx);
 
       expect(await marketplace.fulfilledOrders(offchainOrderHash)).to.be.true;
+    });
+  });
+
+  describe("Sweep order", function () {
+    it("Should fulfill multiple orders with sweepOrders", async function () {
+      const orders = setupSweepOrders();
+
+      // Mock seller's signatures (assume we have a recoverSigner function)
+      const order1Hash = await marketplace.getOrderHashBasic(orders[0]);
+      const order2Hash = await marketplace.getOrderHashBasic(orders[1]);
+
+      const sellerSignature1 = await signOrder(sellerWallet, order1Hash);
+      const sellerSignature2 = await signOrder(sellerWallet, order2Hash);
+
+      const signatures = [sellerSignature1, sellerSignature2];
+
+      // Set up price and fees in Oracle mock
+      const PLATFORM_FEE_BPS = 5;
+      const FACTOR = 100;
+      const priceInETH = Number(ethers.parseEther("0.01")); // 0.01 ETH price for TKB
+      const totalPlatformFee =
+        ((priceInETH * (PLATFORM_FEE_BPS * FACTOR)) / (100 * FACTOR)) *
+        orders.length;
+      // Approve marketplace to transfer tokens on behalf of buyer and seller
+      const marketplaceAddress = await marketplace.getAddress();
+      await high.connect(buyer).approve(marketplaceAddress, "30");
+      await usdc.connect(seller).approve(marketplaceAddress, "300");
+
+      // Execute sweepOrders and verify balances
+      await expect(
+        marketplace
+          .connect(buyer)
+          .sweepOrders(orders, signatures, { value: totalPlatformFee })
+      )
+        .to.emit(marketplace, "OrderFulfilled")
+        .withArgs(order1Hash, buyer.address, 0)
+        .and.emit(marketplace, "OrderFulfilled")
+        .withArgs(order2Hash, buyer.address, 0);
+
+      console.log("buyer HIGH balance: ", await high.balanceOf(buyer.address));
+      console.log("buyer USDC balance: ", await usdc.balanceOf(buyer.address));
+
+      console.log(
+        "seller HIGH balance: ",
+        await high.balanceOf(seller.address)
+      );
+      console.log(
+        "seller USDC balance: ",
+        await usdc.balanceOf(seller.address)
+      );
+      // Check buyer's token balance
+      const buyerUSDCBalance = await usdc.balanceOf(buyer.address);
+      expect(buyerUSDCBalance).to.equal(300);
+
+      // Check seller's token balance
+      const sellerHIGHBalance = await high.balanceOf(seller.address);
+      expect(sellerHIGHBalance).to.equal(30);
     });
   });
 
@@ -514,9 +573,15 @@ describe("Marketplace Contract", function () {
   // Call the contract's fulfillOffchainOrder function
   async function fulfillOrder(order: any, sellerSignature: any) {
     await setupAllowanceToMarketplace();
-    const tx = await marketplace.fulfillOffchainOrder(order, sellerSignature, {
-      value: ethers.parseEther("0.1"), // Example value for payment
-    });
+    const contractAccountAddr = await contractAccount.getAddress();
+    const tx = await marketplace.fulfillOffchainOrder(
+      order,
+      sellerSignature,
+      contractAccountAddr,
+      {
+        value: ethers.parseEther("0.1"), // Example value for payment
+      }
+    );
 
     console.log("Transaction hash:", tx.hash);
     await tx.wait(); // Wait for the transaction to be mined
@@ -529,10 +594,12 @@ describe("Marketplace Contract", function () {
     proof: any
   ) {
     await setupAllowanceToMarketplace();
+    const contractAccountAddr = await contractAccount.getAddress();
     const tx = await marketplace.fulfillOffchainOrderWithMerkleProof(
       order,
       sellerSignature,
       proof,
+      contractAccountAddr,
       {
         value: ethers.parseEther("0.1"),
       }
@@ -722,5 +789,39 @@ describe("Marketplace Contract", function () {
 
     console.log("getFunctionTriggerCalldata:", calldata);
     return calldata;
+  }
+  function setupSweepOrders() {
+    const order1 = {
+      eid: 1,
+      buyer: buyer.address,
+      seller: seller.address,
+      toSell: {
+        asset: usdcAddress,
+        amountOrTokenId: 200,
+      },
+      toFulfill: {
+        asset: highAddress, // high
+        amountOrTokenId: 20, // Amount (ERC20) or Token ID (ERC721)
+      },
+      deadline: Math.floor(Date.now() / 1000) + 3600,
+      fulfilled: false,
+    };
+
+    const order2 = {
+      eid: 2,
+      buyer: buyer.address,
+      seller: seller.address,
+      toSell: {
+        asset: usdcAddress,
+        amountOrTokenId: 100,
+      },
+      toFulfill: {
+        asset: highAddress, // high
+        amountOrTokenId: 10, // Amount (ERC20) or Token ID (ERC721)
+      },
+      deadline: Math.floor(Date.now() / 1000) + 3600,
+      fulfilled: false,
+    };
+    return [order1, order2];
   }
 });

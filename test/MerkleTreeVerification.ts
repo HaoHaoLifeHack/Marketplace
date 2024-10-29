@@ -1,7 +1,13 @@
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { expect } from "chai";
 import { ethers, network } from "hardhat";
-import { Marketplace, OracleHandler, NFTPriceFeed } from "../typechain-types";
+import {
+  Marketplace,
+  OracleHandler,
+  NFTPriceFeed,
+  ContractAccount,
+  SimpleDAO,
+} from "../typechain-types";
 import {
   erc20,
   erc721,
@@ -12,6 +18,8 @@ import { AddressLike } from "ethers";
 import { any, boolean } from "hardhat/internal/core/params/argumentTypes";
 import { StandardMerkleTree } from "@openzeppelin/merkle-tree";
 import { standardLeafHash } from "@openzeppelin/merkle-tree/src/hashes";
+import { Address } from "hardhat-deploy/types";
+import { config as dotenvConfig } from "dotenv";
 
 describe("Marketplace Contract", function () {
   let marketplace: Marketplace;
@@ -115,6 +123,7 @@ describe("Marketplace Contract", function () {
     });
     console.log(`NFTPriceFeed address: ${await nftPriceFeed.getAddress()}`);
   }
+
   async function deployContractAccountFixture() {
     //console.log("seller deploy address:", seller.address);
     const ContractAccount = await ethers.getContractFactory(
@@ -125,11 +134,6 @@ describe("Marketplace Contract", function () {
     const contractAccountAddr = await contractAccount.getAddress();
     console.log(`ContractAccount address: ${contractAccountAddr}`);
     console.log(`ContractAccount owner: ${await contractAccount.owner()}`);
-    await marketplace.connect(seller).addContractAccount(contractAccountAddr);
-    console.log(
-      "ContractAccount added to marketplace:",
-      await marketplace.sellerContractAccounts(sellerAddress)
-    );
   }
   async function deploySimpleDAOFixture() {
     const SimpleDAO = await ethers.getContractFactory("SimpleDAO", seller);
@@ -358,7 +362,7 @@ describe("Marketplace Contract", function () {
         fulfillOrderWithMerkleProof(
           offchainOrder,
           sellerSignature,
-          tree.getProof(0)
+          await searchProof(tree, flattenOrder(offchainOrder))
         )
       ).to.be.revertedWith("Invalid merkle proof");
     });
@@ -377,6 +381,15 @@ describe("Marketplace Contract", function () {
       await marketplace.connect(seller).updateMerkleRoot(tree.root);
       expect(await marketplace.merkleRoots(sellerAddress)).to.equal(tree.root);
 
+      // Set up contract account
+      await setupContractAccountForDAO(
+        sellerAddress,
+        contractAccount,
+        await simpleDAO.getAddress(),
+        usdc,
+        usdcInitAmount
+      );
+
       // fulfill
       const fulfillTx = await fulfillOrderWithMerkleProof(
         offchainOrder,
@@ -386,6 +399,32 @@ describe("Marketplace Contract", function () {
       //console.log("fulfill tx: ", fulfillTx);
 
       expect(await marketplace.fulfilledOrders(offchainOrderHash)).to.be.true;
+    });
+  });
+  describe("Function trigger order on-chain constructed by merkle tree", function () {
+    it("Should vote after fulfilling the order constructed by merkle tree", async function () {
+      const fulfilled = false;
+      const tree = await constructingMerkleTree(fulfilled);
+
+      // User confirm to upload the orders to the chain
+      await marketplace.connect(seller).updateMerkleRoot(tree.root);
+      expect(await marketplace.merkleRoots(sellerAddress)).to.equal(tree.root);
+
+      await setupContractAccountForDAO(
+        sellerAddress,
+        contractAccount,
+        await simpleDAO.getAddress(),
+        usdc,
+        usdcInitAmount
+      );
+
+      // fulfill
+      await fulfillOrderWithMerkleProof(
+        offchainOrder,
+        sellerSignature,
+        await searchProof(tree, flattenOrder(offchainOrder))
+      );
+      await expect(await simpleDAO.votes(1)).to.equal(10);
     });
   });
 
@@ -398,7 +437,7 @@ describe("Marketplace Contract", function () {
         target
       );
       if (leafHash === targetHash) {
-        console.log(`found proof: ${i}`);
+        console.log(`Found proof: ${i}`);
         proof = tree.getProof(i);
         break;
       }
@@ -406,16 +445,29 @@ describe("Marketplace Contract", function () {
     return proof;
   }
 
+  // Call the contract's cancel function
+  async function cancelOrder(order: any, sellerSignature: any) {
+    const tx = await marketplace.cancelOrder(order, sellerSignature);
+
+    console.log("Transaction hash:", tx.hash);
+    await tx.wait(); // Wait for the transaction to be mined
+    console.log("Order cancelled!");
+    return tx;
+  }
+
+  // Call the contract's fulfillOffchainOrder function
   async function fulfillOrderWithMerkleProof(
     order: any,
     sellerSignature: any,
     proof: any
   ) {
-    await setupAllowance();
+    await setupAllowanceToMarketplace();
+    const contractAccountAddr = await contractAccount.getAddress();
     const tx = await marketplace.fulfillOffchainOrderWithMerkleProof(
       order,
       sellerSignature,
       proof,
+      contractAccountAddr,
       {
         value: ethers.parseEther("0.1"),
       }
@@ -433,13 +485,54 @@ describe("Marketplace Contract", function () {
     return signature;
   }
 
-  async function setupAllowance() {
+  async function setupAllowanceToMarketplace() {
     await usdc
       .connect(await ethers.getSigner(sellerWallet.address))
       .approve(marketplace.getAddress(), 1000);
     await high
       .connect(await ethers.getSigner(buyerWallet.address))
       .approve(marketplace.getAddress(), 1000);
+  }
+
+  async function setupContractAccountForDAO(
+    owner: AddressLike,
+    contractAccount: ContractAccount,
+    daoAddress: AddressLike,
+    votingToken: IERC20,
+    amount: any
+  ) {
+    await contractAccount.addVotingToken(
+      await simpleDAO.getAddress(),
+      votingToken
+    );
+    console.log(
+      `Voting Token address in Contract Account: ${await contractAccount
+        .connect(seller)
+        .votingTokens(await simpleDAO.getAddress())}`
+    );
+
+    // Deposit voting tokens in his own account
+    await votingToken.connect(seller).transfer(contractAccount, amount);
+
+    // Check amount in CA
+    console.log(
+      `USDC in Contract Account: ${await usdc.balanceOf(
+        await contractAccount.getAddress()
+      )}`
+    );
+
+    // Approve the contract account
+    await contractAccount
+      .connect(seller)
+      .approveVotingToken(daoAddress, amount);
+
+    // Check
+    console.log(
+      `ContractAccount's allowance to daoAddress: ${await votingToken.allowance(
+        contractAccount,
+        daoAddress
+      )},`
+    );
   }
 
   async function constructingMerkleTree(fulfilled: boolean) {
@@ -482,7 +575,7 @@ describe("Marketplace Contract", function () {
         buyer: buyerAddress,
         seller: sellerAddress,
         toSell: {
-          daoAddress: sellerAddress,
+          daoAddress: await simpleDAO.getAddress(),
           data: testCalldata,
         },
         toFulfill: {
@@ -505,7 +598,7 @@ describe("Marketplace Contract", function () {
         buyer: buyerAddress,
         seller: sellerAddress,
         toSell: {
-          daoAddress: sellerAddress,
+          daoAddress: await simpleDAO.getAddress(),
           data: testCalldata,
         },
         toFulfill: {
@@ -534,5 +627,35 @@ describe("Marketplace Contract", function () {
       order.fulfilled,
     ];
     return flattenOrder;
+  }
+  function getFunctionTriggerCalldata(
+    executeContract: any,
+    functionName: string,
+    proposalId?: any,
+    amount?: any
+  ) {
+    console.log(
+      `executeContract: ${executeContract.interface.name}, function: ${functionName}, proposalId: ${proposalId}, amount: ${amount}`
+    );
+
+    // Create an empty array for the function arguments
+    let args: any[] = [];
+
+    // Conditionally add parameters if they are not undefined or null
+    if (proposalId !== undefined && proposalId !== null) {
+      args.push(proposalId);
+    }
+    if (amount !== undefined && amount !== null) {
+      args.push(amount);
+    }
+
+    // Encode the function call with the dynamically constructed arguments array
+    const calldata = executeContract.interface.encodeFunctionData(
+      functionName,
+      args
+    );
+
+    console.log("getFunctionTriggerCalldata:", calldata);
+    return calldata;
   }
 });
