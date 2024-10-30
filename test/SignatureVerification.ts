@@ -24,6 +24,7 @@ describe("Marketplace Contract", function () {
   let oracleHandler: OracleHandler;
   let nftPriceFeed: NFTPriceFeed;
   let contractAccount: ContractAccount;
+  let contractAccountAddress: AddressLike;
   let simpleDAO: SimpleDAO;
   let owner: any;
   let seller: any;
@@ -128,8 +129,8 @@ describe("Marketplace Contract", function () {
       seller
     );
     contractAccount = await ContractAccount.deploy();
-    const contractAccountAddr = await contractAccount.getAddress();
-    console.log(`ContractAccount address: ${contractAccountAddr}`);
+    contractAccountAddress = await contractAccount.getAddress();
+    console.log(`ContractAccount address: ${contractAccountAddress}`);
     console.log(`ContractAccount owner: ${await contractAccount.owner()}`);
   }
   async function deploySimpleDAOFixture() {
@@ -300,7 +301,7 @@ describe("Marketplace Contract", function () {
     offchainOrder = {
       eid: 1,
       buyer: buyerAddress,
-      seller: sellerAddress,
+      contractAccount: contractAccount,
       toSell: {
         daoAddress: await simpleDAO.getAddress(),
         data: testCalldata,
@@ -373,7 +374,7 @@ describe("Marketplace Contract", function () {
   });
 
   describe("Function trigger order on-chain", function () {
-    it("Should trigger function after fulfilling the order on-chain", async function () {
+    it("Should revert when caller is not a contract", async function () {
       await setupContractAccountForDAO(
         sellerAddress,
         contractAccount,
@@ -382,17 +383,15 @@ describe("Marketplace Contract", function () {
         usdcInitAmount
       );
       const simpleDAOAddress = await simpleDAO.getAddress();
-      const contractAccountAddress = await contractAccount.getAddress();
       await expect(
-        await contractAccount.execute(
-          sellerAddress,
+        contractAccount.execute(
+          offchainOrderHash,
+          sellerSignature,
           simpleDAOAddress,
           testCalldata,
           0
         )
-      )
-        .to.emit(simpleDAO, "Vote")
-        .withArgs(contractAccountAddress, 1, 10);
+      ).to.revertedWith("Only contract can execute");
     });
     it("Should vote after fulfilling the order on-chain", async function () {
       await setupContractAccountForDAO(
@@ -420,15 +419,9 @@ describe("Marketplace Contract", function () {
   // Call the contract's fulfillOffchainOrder function
   async function fulfillOrder(order: any, sellerSignature: any) {
     await setupAllowanceToMarketplace();
-    const contractAccountAddr = await contractAccount.getAddress();
-    const tx = await marketplace.fulfillOffchainOrder(
-      order,
-      sellerSignature,
-      contractAccountAddr,
-      {
-        value: ethers.parseEther("0.1"), // Example value for payment
-      }
-    );
+    const tx = await marketplace.fulfillOffchainOrder(order, sellerSignature, {
+      value: ethers.parseEther("0.1"), // Example value for payment
+    });
 
     console.log("Transaction hash:", tx.hash);
     await tx.wait(); // Wait for the transaction to be mined

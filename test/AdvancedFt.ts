@@ -7,6 +7,7 @@ import {
   NFTPriceFeed,
   ContractAccount,
   SimpleDAO,
+  SimpleDAOV2,
 } from "../typechain-types";
 import {
   erc20,
@@ -28,7 +29,9 @@ describe("Marketplace Contract", function () {
   let oracleHandler: OracleHandler;
   let nftPriceFeed: NFTPriceFeed;
   let contractAccount: ContractAccount;
+  let contractAccountAddress: AddressLike;
   let simpleDAO: SimpleDAO;
+  let simpleDAOV2: SimpleDAOV2;
   let owner: any;
   let seller: any;
   let buyer: any;
@@ -36,9 +39,11 @@ describe("Marketplace Contract", function () {
   let usdc: any;
   let bayc: any;
   let azuki: any;
+  let gameItems: any;
   let sellerAddress: AddressLike;
   let sellerWallet: any;
   let sellerSignature: any;
+  let sellerSignatureForNFT: any;
   let buyerAddress: AddressLike;
   let buyerWallet: any;
   let highAddress: AddressLike;
@@ -48,6 +53,8 @@ describe("Marketplace Contract", function () {
   let testCalldata: any;
   let offchainOrder: any;
   let offchainOrderHash: any;
+  let offchainNFTOrder: any;
+  let offchainNFTOrderHash: any;
   const USDC_ETH_PRICEFEED_ADDRESS: AddressLike =
     "0x986b5E1e1755e3C2440e960477f25201B0a8bbD4";
   const USDT_ETH_PRICEFEED_ADDRESS: AddressLike =
@@ -62,6 +69,7 @@ describe("Marketplace Contract", function () {
   beforeEach(async function () {
     await loadFixture(deployMarketplaceFixture);
     await loadFixture(deploySimpleDAOFixture);
+    await loadFixture(deploySimpleDAOV2Fixture);
     await loadFixture(deployOracleHandlerFixture);
     await loadFixture(deployContractAccountFixture);
     await loadFixture(initializeTokenAmountFixture);
@@ -132,17 +140,13 @@ describe("Marketplace Contract", function () {
       seller
     );
     contractAccount = await ContractAccount.deploy();
-    const contractAccountAddr = await contractAccount.getAddress();
-    console.log(`ContractAccount address: ${contractAccountAddr}`);
+    contractAccountAddress = await contractAccount.getAddress();
+    console.log(`ContractAccount address: ${contractAccountAddress}`);
     console.log(`ContractAccount owner: ${await contractAccount.owner()}`);
   }
   async function deploySimpleDAOFixture() {
     const SimpleDAO = await ethers.getContractFactory("SimpleDAO", seller);
-    simpleDAO = await SimpleDAO.deploy(
-      usdc,
-      await usdc.totalSupply(),
-      await marketplace.getAddress()
-    );
+    simpleDAO = await SimpleDAO.deploy(usdc, await usdc.totalSupply());
     console.log(`DAO address: ${await simpleDAO.getAddress()}`);
     console.log(`DAO voting token: ${await simpleDAO.votingToken()}`);
     console.log(`DAO totalSupply: ${await simpleDAO.totalSupply()}`);
@@ -158,6 +162,32 @@ describe("Marketplace Contract", function () {
 
     console.log("const new proposal:", proposal);
     await simpleDAO.submitProposal(proposal);
+    const proposalId = 1;
+    const defaultProposal = await simpleDAO.proposals(proposalId);
+    console.log("proposal on-chain created:", defaultProposal);
+  }
+  async function deploySimpleDAOV2Fixture() {
+    const SimpleDAOV2 = await ethers.getContractFactory("SimpleDAOV2", seller);
+    simpleDAOV2 = await SimpleDAOV2.deploy(
+      gameItems,
+      0, //use GOLD as voting amount
+      gameItems.totalSupplies(0)
+    );
+    console.log(`DAO address: ${await simpleDAOV2.getAddress()}`);
+    console.log(`DAO voting token: ${await simpleDAOV2.votingToken()}`);
+    console.log(`DAO totalSupply: ${await simpleDAOV2.totalSupply()}`);
+
+    // Add proposal
+    const proposal = {
+      id: 1,
+      executeAddr: await nftPriceFeed.getAddress(),
+      amount: 0,
+      data: getFunctionTriggerCalldata(nftPriceFeed, "setPrice", 20),
+      proposalDetail: "vote to setPrice",
+    };
+
+    console.log("const new proposal:", proposal);
+    await simpleDAOV2.submitProposal(proposal);
     const proposalId = 1;
     const defaultProposal = await simpleDAO.proposals(proposalId);
     console.log("proposal on-chain created:", defaultProposal);
@@ -207,12 +237,10 @@ describe("Marketplace Contract", function () {
     ]);
 
     await network.provider.send("hardhat_setBalance", [
-      await contractAccount.getAddress(),
+      contractAccountAddress,
       ethers.toBeHex(ethInitAmount).toString(),
     ]);
-    const caBalance = await ethers.provider.getBalance(
-      await contractAccount.getAddress()
-    );
+    const caBalance = await ethers.provider.getBalance(contractAccountAddress);
 
     console.log("Contract Account ETH balance: ", caBalance);
     await network.provider.send("hardhat_setBalance", [
@@ -285,6 +313,9 @@ describe("Marketplace Contract", function () {
     await bayc
       .connect(baycWhale)
       .safeTransferFrom(baycWhale, sellerAddress, 2464);
+
+    // Transfer GOLD to seller for voting
+    await gameItems.transfer();
   }
 
   async function offchainSignedDataFixture() {
@@ -304,7 +335,7 @@ describe("Marketplace Contract", function () {
     offchainOrder = {
       eid: 1,
       buyer: buyerAddress,
-      seller: sellerAddress,
+      contractAccount: contractAccountAddress,
       toSell: {
         daoAddress: await simpleDAO.getAddress(),
         data: testCalldata,
@@ -324,11 +355,40 @@ describe("Marketplace Contract", function () {
 
     // Call the function to sign the order
     sellerSignature = await signOrder(sellerWallet, offchainOrderHash);
+
+    // NFT scene
+
+    // Define the order data
+    offchainNFTOrder = {
+      eid: 2,
+      buyer: buyerAddress,
+      contractAccount: contractAccountAddress,
+      toSell: {
+        daoAddress: await simpleDAO.getAddress(),
+        data: testCalldata,
+      },
+      toFulfill: {
+        asset: azukiAddress,
+        amountOrTokenId: 7737,
+      },
+      deadline: Math.floor(Date.now() / 1000) + 3600, // 1-hour expiration
+      fulfilled: false,
+    };
+    console.log("Raw Offchain NFT Order:", offchainNFTOrder);
+
+    // Create the order hash to sign
+    offchainNFTOrderHash = await marketplace.getOrderHash(offchainNFTOrder);
+    console.log("NFT Order Hash:", offchainNFTOrderHash);
+
+    // Call the function to sign the order
+    sellerSignatureForNFT = await signOrder(sellerWallet, offchainNFTOrderHash);
+
+    setupAllowanceToMarketplace();
     console.log(`All fixtures finished!`);
   }
 
   describe("Cancel order", function () {
-    it("Should cancel order", async function () {
+    it("Should off-chain cancel order", async function () {
       const receipt = await cancelOrder(offchainOrder, sellerSignature);
       //console.log("Receipt:", receipt);
 
@@ -346,7 +406,7 @@ describe("Marketplace Contract", function () {
   });
 
   describe("Fulfill order", function () {
-    it("Should fulfill order on-chain", async function () {
+    it("Should fulfill off-chain order on-chain", async function () {
       // Raw order
       //console.log("Raw Order Data:", offchainOrder);
 
@@ -375,10 +435,27 @@ describe("Marketplace Contract", function () {
         .to.emit(marketplace, "OrderFulfilled")
         .withArgs(offchainOrderHash, offchainOrder.buyer, 0); // Check that the event is emitted with the correct argument
     });
+
+    it("Should fulfill off-chain NFT order on-chain", async function () {
+      // Set up contract account
+      await setupContractAccountForDAO(
+        sellerAddress,
+        contractAccount,
+        await simpleDAO.getAddress(),
+        usdc,
+        usdcInitAmount
+      );
+      const receipt = await fulfillOrder(
+        offchainNFTOrder,
+        sellerSignatureForNFT
+      );
+      await expect(await marketplace.fulfilledOrders(offchainNFTOrderHash)).to
+        .be.true;
+    });
   });
 
   describe("Function trigger order on-chain", function () {
-    it("Should trigger function after fulfilling the order on-chain", async function () {
+    it("Should revert when caller is not a contract", async function () {
       await setupContractAccountForDAO(
         sellerAddress,
         contractAccount,
@@ -387,17 +464,15 @@ describe("Marketplace Contract", function () {
         usdcInitAmount
       );
       const simpleDAOAddress = await simpleDAO.getAddress();
-      const contractAccountAddress = await contractAccount.getAddress();
       await expect(
-        await contractAccount.execute(
-          sellerAddress,
+        contractAccount.execute(
+          offchainOrderHash,
+          sellerSignature,
           simpleDAOAddress,
           testCalldata,
           0
         )
-      )
-        .to.emit(simpleDAO, "Vote")
-        .withArgs(contractAccountAddress, 1, 10);
+      ).to.revertedWith("Only contract can execute");
     });
     it("Should vote after fulfilling the order on-chain", async function () {
       await setupContractAccountForDAO(
@@ -409,6 +484,61 @@ describe("Marketplace Contract", function () {
       );
       await fulfillOrder(offchainOrder, sellerSignature);
       await expect(await simpleDAO.votes(1)).to.equal(10);
+    });
+
+    it("Should revert when the proposal is over threshold", async function () {
+      // Set up contract account
+      const votingTokenThreshold = await simpleDAO.threshold();
+      console.log("Voting Token Threshold:", votingTokenThreshold);
+
+      // Test single vote call with assertion
+      await expect(
+        simpleDAO.connect(seller).vote(1, votingTokenThreshold + BigInt(1))
+      ).to.be.revertedWith("Exceeds voting threshold");
+    });
+  });
+
+  describe("Function trigger order on-chain V2", function () {
+    it("Should revert when caller is not a contract", async function () {
+      await setupContractAccountForDAO(
+        sellerAddress,
+        contractAccount,
+        await simpleDAO.getAddress(),
+        usdc,
+        usdcInitAmount
+      );
+      const simpleDAOAddress = await simpleDAO.getAddress();
+      await expect(
+        contractAccount.execute(
+          offchainOrderHash,
+          sellerSignature,
+          simpleDAOAddress,
+          testCalldata,
+          0
+        )
+      ).to.revertedWith("Only contract can execute");
+    });
+    it("Should vote after fulfilling the order on-chain", async function () {
+      await setupContractAccountForDAO(
+        sellerAddress,
+        contractAccount,
+        await simpleDAO.getAddress(),
+        usdc,
+        usdcInitAmount
+      );
+      await fulfillOrder(offchainOrder, sellerSignature);
+      await expect(await simpleDAO.votes(1)).to.equal(10);
+    });
+
+    it("Should revert when the proposal is over threshold", async function () {
+      // Set up contract account
+      const votingTokenThreshold = await simpleDAO.threshold();
+      console.log("Voting Token Threshold:", votingTokenThreshold);
+
+      // Test single vote call with assertion
+      await expect(
+        simpleDAO.connect(seller).vote(1, votingTokenThreshold + BigInt(1))
+      ).to.be.revertedWith("Exceeds voting threshold");
     });
   });
 
@@ -573,15 +703,9 @@ describe("Marketplace Contract", function () {
   // Call the contract's fulfillOffchainOrder function
   async function fulfillOrder(order: any, sellerSignature: any) {
     await setupAllowanceToMarketplace();
-    const contractAccountAddr = await contractAccount.getAddress();
-    const tx = await marketplace.fulfillOffchainOrder(
-      order,
-      sellerSignature,
-      contractAccountAddr,
-      {
-        value: ethers.parseEther("0.1"), // Example value for payment
-      }
-    );
+    const tx = await marketplace.fulfillOffchainOrder(order, sellerSignature, {
+      value: ethers.parseEther("0.1"), // Example value for payment
+    });
 
     console.log("Transaction hash:", tx.hash);
     await tx.wait(); // Wait for the transaction to be mined
@@ -594,12 +718,10 @@ describe("Marketplace Contract", function () {
     proof: any
   ) {
     await setupAllowanceToMarketplace();
-    const contractAccountAddr = await contractAccount.getAddress();
     const tx = await marketplace.fulfillOffchainOrderWithMerkleProof(
       order,
       sellerSignature,
       proof,
-      contractAccountAddr,
       {
         value: ethers.parseEther("0.1"),
       }
@@ -620,10 +742,17 @@ describe("Marketplace Contract", function () {
   async function setupAllowanceToMarketplace() {
     await usdc
       .connect(await ethers.getSigner(sellerWallet.address))
-      .approve(marketplace.getAddress(), 1000);
+      .approve(marketplace.getAddress(), await usdc.balanceOf(seller));
     await high
       .connect(await ethers.getSigner(buyerWallet.address))
-      .approve(marketplace.getAddress(), 1000);
+      .approve(marketplace.getAddress(), await high.balanceOf(buyer));
+
+    await bayc
+      .connect(seller)
+      .setApprovalForAll(marketplace.getAddress(), true);
+    await azuki
+      .connect(buyer)
+      .setApprovalForAll(marketplace.getAddress(), true);
   }
 
   async function setupContractAccountForDAO(
@@ -675,7 +804,7 @@ describe("Marketplace Contract", function () {
     const leaves = orders.map((order) => [
       order.eid,
       order.buyer,
-      order.seller,
+      order.contractAccount,
       order.toSell.daoAddress,
       order.toSell.data,
       order.toFulfill.asset,
@@ -705,7 +834,7 @@ describe("Marketplace Contract", function () {
       const order = {
         eid: i + 1,
         buyer: buyerAddress,
-        seller: sellerAddress,
+        contractAccount: contractAccountAddress,
         toSell: {
           daoAddress: await simpleDAO.getAddress(),
           data: testCalldata,
@@ -728,7 +857,7 @@ describe("Marketplace Contract", function () {
       const order = {
         eid: i + 1,
         buyer: buyerAddress,
-        seller: sellerAddress,
+        contractAccount: contractAccountAddress,
         toSell: {
           daoAddress: await simpleDAO.getAddress(),
           data: testCalldata,
@@ -750,7 +879,7 @@ describe("Marketplace Contract", function () {
     const flattenOrder = [
       order.eid,
       order.buyer,
-      order.seller,
+      order.contractAccount,
       order.toSell.daoAddress,
       order.toSell.data,
       order.toFulfill.asset,

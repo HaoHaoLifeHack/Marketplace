@@ -8,6 +8,7 @@ interface IDAO {
         uint256 amount;
         bytes data;
         string proposalDetail;
+        bool executed;
     }
 
     // the total amount of vote for the proposal to pass

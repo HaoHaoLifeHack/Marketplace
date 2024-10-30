@@ -2,12 +2,13 @@
 pragma solidity ^0.8.24;
 
 import "./interfaces/IDAO.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import "./interfaces/IMarketplace.sol";
 import "./interfaces/IContractAccount.sol";
 
-contract SimpleDAO is IDAO {
-    IERC20 public votingToken;
+contract SimpleDAOV2 is IDAO {
+    IERC1155 public votingToken;
+    uint256 public votingTokenId; // Token ID used for voting
     mapping(uint256 => Proposal) public proposals; // proposalId => proposal
     uint256 public totalSupply;
     mapping(uint256 => uint256) public votes; // proposalId => votes
@@ -18,8 +19,13 @@ contract SimpleDAO is IDAO {
         uint256 indexed amount
     );
 
-    constructor(IERC20 _votingToken, uint256 _totalSupply) {
+    constructor(
+        IERC1155 _votingToken,
+        uint256 _votingTokenId,
+        uint256 _totalSupply
+    ) {
         votingToken = _votingToken;
+        votingTokenId = _votingTokenId;
         totalSupply = _totalSupply;
     }
 
@@ -36,20 +42,17 @@ contract SimpleDAO is IDAO {
             votes[proposalId] + amount <= threshold(),
             "Exceeds voting threshold"
         );
-        votingToken.transferFrom(msg.sender, address(this), amount);
+
+        // Use ERC1155's safeTransferFrom for token transfer
+        votingToken.safeTransferFrom(
+            msg.sender,
+            address(this),
+            votingTokenId,
+            amount,
+            ""
+        );
+
         votes[proposalId] += amount;
         emit Vote(msg.sender, proposalId, amount);
-        if (votes[proposalId] >= threshold()) _executeProposal(proposalId);
-    }
-
-    function _executeProposal(uint256 proposalId) internal {
-        Proposal storage proposal = proposals[proposalId];
-        require(!proposal.executed, "Proposal already executed");
-
-        // Mark the proposal as executed
-        proposal.executed = true;
-
-        (bool success, ) = proposal.executeAddr.call(proposal.data);
-        require(success, "Proposal execution failed");
     }
 }

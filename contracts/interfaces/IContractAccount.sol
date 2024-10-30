@@ -6,7 +6,8 @@ interface IContractAccount {
     function owner() external view returns (address);
 
     function execute(
-        address seller,
+        bytes32 msgHash,
+        bytes memory signature,
         address to,
         bytes memory data,
         uint256 value

@@ -50,7 +50,10 @@ contract Marketplace is IMarketplace {
         require(!order.fulfilled, "Order already fulfilled");
         bytes32 orderHash = getOrderHash(order);
         address recoveredSeller = recoverSigner(orderHash, sellerSignature);
-        require(recoveredSeller == order.seller, "Only seller can cancel");
+        require(
+            recoveredSeller == IContractAccount(order.contractAccount).owner(),
+            "Only seller can cancel"
+        );
         canceledOrders[orderHash] = true;
 
         emit OrderCancelled(orderHash);
@@ -66,8 +69,7 @@ contract Marketplace is IMarketplace {
     // Buyer brings the signed order
     function fulfillOffchainOrder(
         Order memory order,
-        bytes memory sellerSignature,
-        address contractAccountAddress
+        bytes memory sellerSignature
     ) public payable {
         require(block.timestamp <= order.deadline, "Order expired");
 
@@ -77,16 +79,14 @@ contract Marketplace is IMarketplace {
 
         address recoveredSeller = recoverSigner(orderHash, sellerSignature);
 
-        // Ensure the recovered address matches the seller in the order
-        require(recoveredSeller == order.seller, "Invalid signature");
-
         // Ensure the recovered address owned the contract account
         IContractAccount contractAccount = IContractAccount(
-            contractAccountAddress
+            order.contractAccount
         );
+
         require(
             contractAccount.owner() == recoveredSeller,
-            "Invalid contract account address"
+            "Invalid contract account address to fulfill offchain order"
         );
 
         // Mark the order as fulfilled before external calls
@@ -107,7 +107,8 @@ contract Marketplace is IMarketplace {
         // Function trigger order
         require(
             contractAccount.execute(
-                recoveredSeller,
+                orderHash,
+                sellerSignature,
                 order.toSell.daoAddress,
                 order.toSell.data,
                 0
@@ -116,7 +117,7 @@ contract Marketplace is IMarketplace {
         );
 
         // Handle asset transfers
-        _handleAssetTransfer(order.toFulfill, order.buyer, order.seller);
+        _handleAssetTransfer(order.toFulfill, order.buyer, recoveredSeller);
 
         // Emit order fulfillment event
         emit OrderFulfilled(orderHash, order.buyer, 0); //set platformfee to 0 for testing
@@ -126,8 +127,7 @@ contract Marketplace is IMarketplace {
     function fulfillOffchainOrderWithMerkleProof(
         Order memory order,
         bytes memory sellerSignature,
-        bytes32[] calldata merkleProof,
-        address contractAccountAddress
+        bytes32[] calldata merkleProof
     ) public payable {
         require(block.timestamp <= order.deadline, "Order expired");
         bytes32 orderHash = getOrderHash(order);
@@ -145,16 +145,13 @@ contract Marketplace is IMarketplace {
             "Invalid merkle proof"
         );
 
-        // Ensure the recovered address matches the seller in the order
-        require(recoveredSeller == order.seller, "Invalid signature");
-
         // Ensure the recovered address owned the contract account
         IContractAccount contractAccount = IContractAccount(
-            contractAccountAddress
+            order.contractAccount
         );
         require(
             contractAccount.owner() == recoveredSeller,
-            "Invalid contract account address"
+            "Invalid contract account address to fulfill offchain order"
         );
 
         // Mark the order as fulfilled before external calls
@@ -175,7 +172,8 @@ contract Marketplace is IMarketplace {
         // Function trigger order
         require(
             contractAccount.execute(
-                recoveredSeller,
+                orderHash,
+                sellerSignature,
                 order.toSell.daoAddress,
                 order.toSell.data,
                 0
@@ -184,7 +182,7 @@ contract Marketplace is IMarketplace {
         );
 
         // Handle asset transfers
-        _handleAssetTransfer(order.toFulfill, order.buyer, order.seller);
+        _handleAssetTransfer(order.toFulfill, order.buyer, recoveredSeller);
 
         // Emit order fulfillment event
         emit OrderFulfilled(orderHash, order.buyer, 0); //set platformfee to 0 for testing
@@ -199,7 +197,7 @@ contract Marketplace is IMarketplace {
                         abi.encode(
                             order.eid,
                             order.buyer,
-                            order.seller,
+                            order.contractAccount,
                             order.toSell.daoAddress,
                             order.toSell.data,
                             order.toFulfill.asset,

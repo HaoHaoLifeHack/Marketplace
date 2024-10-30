@@ -25,7 +25,7 @@ interface IMarketplace {
     }
     struct Order {
         uint256 eid;
-        address seller;
+        address contractAccount;
         address buyer;
         Trigger toSell;
         Item toFulfill;

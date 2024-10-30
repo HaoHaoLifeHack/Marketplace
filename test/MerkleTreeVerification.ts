@@ -26,6 +26,7 @@ describe("Marketplace Contract", function () {
   let oracleHandler: OracleHandler;
   let nftPriceFeed: NFTPriceFeed;
   let contractAccount: ContractAccount;
+  let contractAccountAddress: AddressLike;
   let simpleDAO: SimpleDAO;
   let owner: any;
   let seller: any;
@@ -131,8 +132,8 @@ describe("Marketplace Contract", function () {
       seller
     );
     contractAccount = await ContractAccount.deploy();
-    const contractAccountAddr = await contractAccount.getAddress();
-    console.log(`ContractAccount address: ${contractAccountAddr}`);
+    contractAccountAddress = await contractAccount.getAddress();
+    console.log(`ContractAccount address: ${contractAccountAddress}`);
     console.log(`ContractAccount owner: ${await contractAccount.owner()}`);
   }
   async function deploySimpleDAOFixture() {
@@ -303,7 +304,7 @@ describe("Marketplace Contract", function () {
     offchainOrder = {
       eid: 1,
       buyer: buyerAddress,
-      seller: sellerAddress,
+      contractAccount: contractAccountAddress,
       toSell: {
         daoAddress: await simpleDAO.getAddress(),
         data: testCalldata,
@@ -362,7 +363,7 @@ describe("Marketplace Contract", function () {
         fulfillOrderWithMerkleProof(
           offchainOrder,
           sellerSignature,
-          await searchProof(tree, flattenOrder(offchainOrder))
+          tree.getProof(0)
         )
       ).to.be.revertedWith("Invalid merkle proof");
     });
@@ -370,6 +371,13 @@ describe("Marketplace Contract", function () {
 
   describe("Fulfill order constructed by merkle tree", function () {
     it("Should fulfill order with merkle proof on-chain", async function () {
+      await setupContractAccountForDAO(
+        sellerAddress,
+        contractAccount,
+        await simpleDAO.getAddress(),
+        usdc,
+        usdcInitAmount
+      );
       var fulfilled = false;
       const tree = await constructingMerkleTree(fulfilled);
 
@@ -380,15 +388,6 @@ describe("Marketplace Contract", function () {
       // User confirm to upload the orders to the chain
       await marketplace.connect(seller).updateMerkleRoot(tree.root);
       expect(await marketplace.merkleRoots(sellerAddress)).to.equal(tree.root);
-
-      // Set up contract account
-      await setupContractAccountForDAO(
-        sellerAddress,
-        contractAccount,
-        await simpleDAO.getAddress(),
-        usdc,
-        usdcInitAmount
-      );
 
       // fulfill
       const fulfillTx = await fulfillOrderWithMerkleProof(
@@ -467,7 +466,6 @@ describe("Marketplace Contract", function () {
       order,
       sellerSignature,
       proof,
-      contractAccountAddr,
       {
         value: ethers.parseEther("0.1"),
       }
@@ -543,7 +541,7 @@ describe("Marketplace Contract", function () {
     const leaves = orders.map((order) => [
       order.eid,
       order.buyer,
-      order.seller,
+      order.contractAccount,
       order.toSell.daoAddress,
       order.toSell.data,
       order.toFulfill.asset,
@@ -573,7 +571,7 @@ describe("Marketplace Contract", function () {
       const order = {
         eid: i + 1,
         buyer: buyerAddress,
-        seller: sellerAddress,
+        contractAccount: contractAccountAddress,
         toSell: {
           daoAddress: await simpleDAO.getAddress(),
           data: testCalldata,
@@ -596,7 +594,7 @@ describe("Marketplace Contract", function () {
       const order = {
         eid: i + 1,
         buyer: buyerAddress,
-        seller: sellerAddress,
+        contractAccount: contractAccountAddress,
         toSell: {
           daoAddress: await simpleDAO.getAddress(),
           data: testCalldata,
@@ -618,7 +616,7 @@ describe("Marketplace Contract", function () {
     const flattenOrder = [
       order.eid,
       order.buyer,
-      order.seller,
+      order.contractAccount,
       order.toSell.daoAddress,
       order.toSell.data,
       order.toFulfill.asset,
