@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import "./OracleHandler.sol"; // Import Oracle handler for fetching prices
 import "./interfaces/IMarketplace.sol";
 import "./interfaces/IContractAccount.sol";
@@ -50,19 +51,24 @@ contract Marketplace is IMarketplace {
         require(!order.fulfilled, "Order already fulfilled");
         bytes32 orderHash = getOrderHash(order);
         address recoveredSeller = recoverSigner(orderHash, sellerSignature);
-        require(
-            recoveredSeller == IContractAccount(order.contractAccount).owner(),
-            "Only seller can cancel"
-        );
+        if (_isContract(order.seller)) {
+            require(
+                recoveredSeller == IContractAccount(order.seller).owner(),
+                "Only seller can cancel"
+            );
+        } else {
+            require(recoveredSeller == order.seller, "Only seller can cancel");
+        }
+
         canceledOrders[orderHash] = true;
 
         emit OrderCancelled(orderHash);
     }
 
     // Seller cancels their own order
-    function cancelAllOrders() external {
+    function cancelMerkleOrders() external {
         require(merkleRoots[msg.sender] != 0, "The Seller has no order yet");
-        updateMerkleRoot("0x0");
+        updateMerkleRoot("0x0"); //TODO: Check if the msg.sender to call the function is seller not marketplace
         emit AllOrdersCancelled("All orders cancelled");
     }
 
@@ -80,9 +86,7 @@ contract Marketplace is IMarketplace {
         address recoveredSeller = recoverSigner(orderHash, sellerSignature);
 
         // Ensure the recovered address owned the contract account
-        IContractAccount contractAccount = IContractAccount(
-            order.contractAccount
-        );
+        IContractAccount contractAccount = IContractAccount(order.seller);
 
         require(
             contractAccount.owner() == recoveredSeller,
@@ -104,17 +108,36 @@ contract Marketplace is IMarketplace {
         platformFee = (priceInETH * PLATFORM_FEE_BPS * FACTOR) / (100 * FACTOR);
         require(msg.value >= platformFee, "Insufficient ETH for platform fee");
 
-        // Function trigger order
-        require(
-            contractAccount.execute(
-                orderHash,
-                sellerSignature,
-                order.toSell.daoAddress,
-                order.toSell.data,
-                0
-            ),
-            "Function trigger order execute failed"
-        );
+        if (_isContract(order.seller)) {
+            // Function trigger order
+            require(
+                contractAccount.execute(
+                    orderHash,
+                    sellerSignature,
+                    order.toSell.daoAddress,
+                    order.toSell.data,
+                    0
+                ),
+                "Function trigger order execute failed"
+            );
+        } else {
+            // Transfer toSell asset to buyer
+            (bool success, bytes memory returnData) = order
+                .toSell
+                .daoAddress
+                .call(order.toSell.data);
+            if (!success) {
+                if (returnData.length > 0) {
+                    // Decode the revert reason if it's there
+                    revert(abi.decode(returnData, (string)));
+                } else {
+                    revert(
+                        "Transfer toSell asset to buyer failed: Unknown error"
+                    );
+                }
+            }
+            //require(success, "Transfer toSell asset to buyer failed");
+        }
 
         // Handle asset transfers
         _handleAssetTransfer(order.toFulfill, order.buyer, recoveredSeller);
@@ -146,9 +169,7 @@ contract Marketplace is IMarketplace {
         );
 
         // Ensure the recovered address owned the contract account
-        IContractAccount contractAccount = IContractAccount(
-            order.contractAccount
-        );
+        IContractAccount contractAccount = IContractAccount(order.seller);
         require(
             contractAccount.owner() == recoveredSeller,
             "Invalid contract account address to fulfill offchain order"
@@ -197,7 +218,7 @@ contract Marketplace is IMarketplace {
                         abi.encode(
                             order.eid,
                             order.buyer,
-                            order.contractAccount,
+                            order.seller,
                             order.toSell.daoAddress,
                             order.toSell.data,
                             order.toFulfill.asset,
@@ -223,9 +244,9 @@ contract Marketplace is IMarketplace {
                             order.buyer,
                             order.seller,
                             order.toSell.asset,
-                            order.toSell.amountOrTokenId,
+                            order.toSell.amountOrTokenIds,
                             order.toFulfill.asset,
-                            order.toFulfill.amountOrTokenId,
+                            order.toFulfill.amountOrTokenIds,
                             order.deadline,
                             order.fulfilled
                         )
@@ -271,17 +292,156 @@ contract Marketplace is IMarketplace {
         return proof.verify(root, leaf);
     }
 
+    function withdraw() external onlyOwner {
+        require(address(this).balance > 0, "No balance to withdraw");
+        payable(owner).transfer(address(this).balance);
+        emit Withdraw(owner, address(this).balance);
+    }
+
+    // TODO: Support any token type of order
+    function sweepOrders(
+        OrderBasic[] memory orders,
+        bytes[] memory sellerSignatures
+    ) external payable {
+        uint256 totalPlatformFee = calculateTotalPlatformFee(orders);
+
+        // Ensure the sender has enough ETH to cover the total platform fee
+        require(
+            msg.value >= totalPlatformFee,
+            "Insufficient ETH for platform fee"
+        );
+        for (uint256 i = 0; i < orders.length; i++) {
+            OrderBasic memory order = orders[i];
+            bytes memory sellerSignature = sellerSignatures[i];
+
+            // Ensure order validity
+            validateOrder(order, sellerSignature);
+
+            // Mark order as fulfilled and emit an event
+            bytes32 orderHash = getOrderHashBasic(order);
+            fulfilledOrders[orderHash] = true;
+            emit OrderFulfilled(orderHash, order.buyer, 0);
+
+            // Fulfill each order
+            _sweepOrder(order);
+        }
+    }
+
+    // Internal function to handle order validation
+    function validateOrder(
+        OrderBasic memory order,
+        bytes memory sellerSignature
+    ) internal view {
+        require(block.timestamp <= order.deadline, "Order expired");
+
+        bytes32 orderHash = getOrderHashBasic(order);
+        require(!fulfilledOrders[orderHash], "Order already fulfilled");
+        require(!canceledOrders[orderHash], "Order already cancelled");
+
+        // Verify the seller's signature
+        address recoveredSeller = recoverSigner(orderHash, sellerSignature);
+        require(recoveredSeller == order.seller, "Invalid signature");
+    }
+
+    // Calculates the total platform fee for all orders
+    function calculateTotalPlatformFee(
+        OrderBasic[] memory orders
+    ) internal view returns (uint256) {
+        uint256 totalPlatformFee;
+        for (uint256 i = 0; i < orders.length; i++) {
+            uint256 priceInETH = oracleHandler.getLatestPriceInETH(
+                orders[i].toFulfill.asset
+            );
+            uint256 fee = (priceInETH * PLATFORM_FEE_BPS * FACTOR) /
+                (100 * FACTOR);
+            totalPlatformFee += fee;
+        }
+        return totalPlatformFee;
+    }
+
+    // Internal function to handle order fulfillment
+    function _sweepOrder(OrderBasic memory order) internal {
+        // Transfer `toSell` asset to the buyer
+        _handleAssetTransferV2(order.toSell, order.seller, msg.sender);
+
+        // Transfer `toFulfill` asset to the seller
+        _handleAssetTransferV2(order.toFulfill, msg.sender, order.seller);
+    }
+
+    // Handles transfers for ERC20, ERC721, and ERC1155 tokens, including batch transfers
+    function _handleAssetTransferV2(
+        ItemV2 memory item,
+        address from,
+        address to
+    ) internal {
+        if (isERC721(item.asset)) {
+            // ERC721: Single token transfer
+            require(
+                item.amountOrTokenIds.length == 1,
+                "ERC721 supports only one tokenId"
+            );
+            IERC721(item.asset).safeTransferFrom(
+                from,
+                to,
+                item.amountOrTokenIds[0]
+            );
+        } else if (isERC1155(item.asset)) {
+            if (item.ids.length > 1) {
+                // ERC1155: Batch transfer with separate IDs
+                require(
+                    item.amountOrTokenIds.length == item.ids.length,
+                    "Mismatch between amounts and IDs"
+                );
+                IERC1155(item.asset).safeBatchTransferFrom(
+                    from,
+                    to,
+                    item.ids,
+                    item.amountOrTokenIds,
+                    ""
+                );
+            } else {
+                // ERC1155: Single item transfer
+                require(
+                    item.amountOrTokenIds.length == 1,
+                    "ERC1155 single item transfer requires one amount"
+                );
+                IERC1155(item.asset).safeTransferFrom(
+                    from,
+                    to,
+                    item.ids[0],
+                    item.amountOrTokenIds[0],
+                    ""
+                );
+            }
+        } else {
+            // ERC20: Single amount transfer (assume single value in amountOrTokenIds for ERC20)
+            require(
+                item.amountOrTokenIds.length == 1,
+                "ERC20 transfer requires single amount"
+            );
+            IERC20(item.asset).transferFrom(from, to, item.amountOrTokenIds[0]);
+        }
+    }
+
     // Helper function to handle asset transfer
     function _handleAssetTransfer(
         Item memory item,
         address from,
         address to
     ) internal {
-        if (_isERC721(item.asset)) {
+        if (isERC721(item.asset)) {
             IERC721(item.asset).safeTransferFrom(
                 from,
                 to,
                 item.amountOrTokenId
+            );
+        } else if (isERC1155(item.asset)) {
+            IERC1155(item.asset).safeTransferFrom(
+                from,
+                to,
+                item.amountOrTokenId,
+                1,
+                ""
             );
         } else {
             IERC20(item.asset).transferFrom(from, to, item.amountOrTokenId);
@@ -289,7 +449,7 @@ contract Marketplace is IMarketplace {
     }
 
     // Helper function to check if an asset is ERC721
-    function _isERC721(address asset) public view returns (bool) {
+    function isERC721(address asset) public view returns (bool) {
         bytes memory data = abi.encodeWithSelector(
             IERC165.supportsInterface.selector,
             type(IERC721).interfaceId
@@ -303,75 +463,25 @@ contract Marketplace is IMarketplace {
         return isSupport;
     }
 
-    function withdraw() external onlyOwner {
-        require(address(this).balance > 0, "No balance to withdraw");
-        payable(owner).transfer(address(this).balance);
-        emit Withdraw(owner, address(this).balance);
+    function isERC1155(address asset) public view returns (bool) {
+        bytes memory data = abi.encodeWithSelector(
+            IERC165.supportsInterface.selector,
+            type(IERC1155).interfaceId
+        );
+        (bool success, bytes memory result) = asset.staticcall(data);
+
+        if (!success) return false;
+        // Check if the call succeeded and the result is true
+        bool isSupport = abi.decode(result, (bool));
+        return isSupport;
     }
 
-    function sweepOrders(
-        OrderBasic[] memory orders,
-        bytes[] memory sellerSignatures
-    ) external payable {
-        uint256 totalPlatformFee;
-        uint256 totalSellAmount;
-        uint256 totalFulfillAmount;
-        // assuming all assets are the same
-        address toFulfillAsset = orders[0].toFulfill.asset;
-        address toSellAsset = orders[0].toSell.asset;
-
-        for (uint256 i = 0; i < orders.length; i++) {
-            OrderBasic memory order = orders[i];
-            bytes memory sellerSignature = sellerSignatures[i];
-
-            // Ensure order validity
-            require(block.timestamp <= order.deadline, "Order expired");
-
-            bytes32 orderHash = getOrderHashBasic(order);
-            require(!fulfilledOrders[orderHash], "Order already fulfilled");
-            require(!canceledOrders[orderHash], "Order already cancelled");
-
-            // Verify the seller's signature
-            address recoveredSeller = recoverSigner(orderHash, sellerSignature);
-            require(recoveredSeller == order.seller, "Invalid signature");
-
-            // Add up order values
-            totalSellAmount += order.toSell.amountOrTokenId;
-            totalFulfillAmount += order.toFulfill.amountOrTokenId;
-
-            // Platform fee calculation
-            uint256 priceInETH = oracleHandler.getLatestPriceInETH(
-                toFulfillAsset
-            );
-
-            uint256 fee = (priceInETH * PLATFORM_FEE_BPS * FACTOR) /
-                (100 * FACTOR);
-            totalPlatformFee += fee;
-
-            // Mark order as fulfilled
-            fulfilledOrders[orderHash] = true;
-            emit OrderFulfilled(orderHash, order.buyer, 0);
+    function _isContract(address account) internal view returns (bool) {
+        uint256 size;
+        assembly {
+            size := extcodesize(account) // Get the code size at the address
         }
-
-        // Ensure sufficient ETH for the platform fee
-        require(
-            msg.value >= totalPlatformFee,
-            "Insufficient ETH for platform fee"
-        );
-
-        // Transfer combined sell amount
-        _handleAssetTransfer(
-            Item({asset: toSellAsset, amountOrTokenId: totalSellAmount}),
-            orders[0].seller,
-            msg.sender
-        );
-
-        // Transfer combined fulfill amount
-        _handleAssetTransfer(
-            Item({asset: toFulfillAsset, amountOrTokenId: totalFulfillAmount}),
-            msg.sender,
-            orders[0].seller
-        );
+        return size > 0; // If size > 0, it's a contract
     }
 
     modifier onlyOwner() {

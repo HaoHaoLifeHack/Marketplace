@@ -10,6 +10,12 @@ interface IMarketplace {
         address asset;
         uint256 amountOrTokenId;
     }
+    struct ItemV2 {
+        address asset;
+        uint256[] ids;
+        uint256[] amountOrTokenIds;
+    }
+    // TODO: Make a new scene for simple asset transfers (`data` = _handleTransfer asset in `address`  )
     struct Trigger {
         address daoAddress;
         bytes data;
@@ -18,14 +24,14 @@ interface IMarketplace {
         uint256 eid;
         address seller;
         address buyer;
-        Item toSell;
-        Item toFulfill;
+        ItemV2 toSell;
+        ItemV2 toFulfill;
         bool fulfilled;
         uint256 deadline;
     }
     struct Order {
         uint256 eid;
-        address contractAccount;
+        address seller;
         address buyer;
         Trigger toSell;
         Item toFulfill;

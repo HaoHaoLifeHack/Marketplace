@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import "./interfaces/IContractAccount.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 contract ContractAccount is IContractAccount {
@@ -10,20 +11,49 @@ contract ContractAccount is IContractAccount {
 
     address public override owner;
     mapping(address => IERC20) public votingTokens; // DAO => VotingToken
+    mapping(address => IERC1155) public votingTokens1155; // DAO => VotingToken1155
 
     constructor() {
         owner = msg.sender;
     }
 
-    function addVotingToken(address daoAddress, IERC20 token) external {
+    function addVotingToken(
+        address daoAddress,
+        address tokenAddress,
+        bool isERC1155
+    ) external {
         require(msg.sender == owner, "Only owner can add");
-        votingTokens[daoAddress] = token;
+
+        if (isERC1155) {
+            votingTokens1155[daoAddress] = IERC1155(tokenAddress);
+        } else {
+            votingTokens[daoAddress] = IERC20(tokenAddress);
+        }
     }
 
-    function approveVotingToken(address daoAddress, uint256 amount) external {
+    function approveVotingToken(
+        address daoAddress,
+        uint256 amount,
+        uint256 tokenId
+    ) external {
         require(msg.sender == owner, "Only owner can approve");
-        IERC20 token = votingTokens[daoAddress];
-        token.approve(daoAddress, amount);
+        if (tokenId == 0) {
+            // ERC20 case
+            IERC20 token = votingTokens[daoAddress];
+            require(
+                address(token) != address(0),
+                "ERC20 token not set for DAO"
+            );
+            token.approve(daoAddress, amount);
+        } else {
+            // ERC1155 case
+            IERC1155 token1155 = votingTokens1155[daoAddress];
+            require(
+                address(token1155) != address(0),
+                "ERC1155 token not set for DAO"
+            );
+            token1155.setApprovalForAll(daoAddress, true); // ERC1155 typically uses this for approval
+        }
     }
 
     function execute(
