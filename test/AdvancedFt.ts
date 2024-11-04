@@ -50,6 +50,7 @@ describe("Marketplace Contract", function () {
   let sellerSignatureBasic: any;
   let buyerAddress: AddressLike;
   let buyerWallet: any;
+  let ownerWallet: any;
   let highAddress: AddressLike;
   let usdcAddress: AddressLike;
   let baycAddress: AddressLike;
@@ -75,6 +76,7 @@ describe("Marketplace Contract", function () {
   beforeEach(async function () {
     await loadFixture(deployMarketplaceFixture);
     await loadFixture(deploySimpleDAOFixture);
+    await loadFixture(deployGameItemsFixture);
     await loadFixture(deploySimpleDAOV2Fixture);
     await loadFixture(deployOracleHandlerFixture);
     await loadFixture(deployContractAccountFixture);
@@ -89,8 +91,13 @@ describe("Marketplace Contract", function () {
 
     const buyerPrivateKey = process.env.BUYER_PRIVATE_KEY; // #18 address: 0xdD2FD4581271e230360230F9337D5c0430Bf44C0
     buyerWallet = new ethers.Wallet(buyerPrivateKey);
+
+    const ownerPrivateKey = process.env.OWNER_PRIVATE_KEY; // #17 address: 0xbDA5747bFD65F08deb54cb465eB87D40e51B197E
+    ownerWallet = new ethers.Wallet(ownerPrivateKey);
+
     console.log("seller address:", sellerWallet.address);
     console.log("buyer address:", buyerWallet.address);
+    console.log("owner address:", ownerWallet.address);
 
     // Address
     sellerAddress = await sellerWallet.address;
@@ -99,6 +106,7 @@ describe("Marketplace Contract", function () {
     // Signer
     seller = await ethers.getSigner(sellerWallet.address);
     buyer = await ethers.getSigner(buyerWallet.address);
+    owner = await ethers.getSigner(ownerWallet.address);
 
     // Deploy OracleHandler
     const OracleHandler = await ethers.getContractFactory("OracleHandler");
@@ -123,7 +131,7 @@ describe("Marketplace Contract", function () {
     azuki = await ethers.getContractAt("IERC721", azukiAddress);
 
     // Deploy Marketplace
-    const Marketplace = await ethers.getContractFactory("Marketplace");
+    const Marketplace = await ethers.getContractFactory("Marketplace", owner);
     marketplace = await Marketplace.deploy(oracleHandler.getAddress(), {
       gasLimit: 30000000,
       maxFeePerGas: ethers.parseUnits("20000", "gwei"), // Set higher maxFeePerGas
@@ -150,6 +158,22 @@ describe("Marketplace Contract", function () {
     console.log(`ContractAccount address: ${contractAccountAddress}`);
     console.log(`ContractAccount owner: ${await contractAccount.owner()}`);
   }
+  async function deployGameItemsFixture() {
+    const GameItems = await ethers.getContractFactory("GameItems", seller);
+    gameItems = await GameItems.deploy();
+    console.log(
+      `Seller's GOLD address: ${await gameItems.balanceOf(sellerAddress, 1)}`
+    );
+    console.log(
+      `Seller's SILVER address: ${await gameItems.balanceOf(sellerAddress, 2)}`
+    );
+    console.log(
+      `Seller's THORS_Hammer address: ${await gameItems.balanceOf(
+        sellerAddress,
+        3
+      )}`
+    );
+  }
   async function deploySimpleDAOFixture() {
     const SimpleDAO = await ethers.getContractFactory("SimpleDAO", seller);
     simpleDAO = await SimpleDAO.deploy(usdc, await usdc.totalSupply());
@@ -173,11 +197,8 @@ describe("Marketplace Contract", function () {
     const defaultProposal = await simpleDAO.proposals(proposalId);
     console.log("proposal on-chain created:", defaultProposal);
   }
-  async function deploySimpleDAOV2Fixture() {
-    // Impl ERC1155
-    const GameItems = await ethers.getContractFactory("GameItems", seller);
-    gameItems = await GameItems.deploy();
 
+  async function deploySimpleDAOV2Fixture() {
     // Setup voting token for DAO
     const SimpleDAOV2 = await ethers.getContractFactory("SimpleDAOV2", seller);
     simpleDAOV2 = await SimpleDAOV2.deploy(
@@ -293,12 +314,20 @@ describe("Marketplace Contract", function () {
 
     // Check initial HIGH balance of test account
     const initHighBalance = await high.balanceOf(buyerAddress);
+    console.log(`buyer init high amount: ${initHighBalance}`);
+    console.log(`highInitAmount: ${highInitAmount}`);
 
     initHighBalance != 0
       ? await high
           .connect(highWhale)
           .transfer(buyerAddress, highInitAmount - initHighBalance)
       : await high.connect(highWhale).transfer(buyerAddress, highInitAmount);
+
+    console.log(
+      `buyer high amount after initialization: ${await high.balanceOf(
+        buyerAddress
+      )}`
+    );
 
     // Initial NFT amount
     // Buyer get AZUKI
@@ -328,20 +357,7 @@ describe("Marketplace Contract", function () {
       .connect(baycWhale)
       .safeTransferFrom(baycWhale, sellerAddress, 2464);
 
-    //// Transfer GOLD to seller for voting
-    // await gameItems
-    //   .connect(seller)
-    //   .setApprovalForAll(contractAccountAddress, true);
-
-    // await gameItems
-    //   .connect(seller)
-    //   .safeTransferFrom(sellerAddress, contractAccountAddress, 0, 10 ** 10, "");
-    // console.log(
-    //   `ContractAccount GOLD amount: ${await gameItems.balanceOf(
-    //     contractAccountAddress,
-    //     0
-    //   )}`
-    // );
+    setupAllowanceToMarketplace();
   }
 
   async function offchainSignedDataFixture() {
@@ -355,7 +371,7 @@ describe("Marketplace Contract", function () {
       amount
     );
 
-    //console.log("Offchain-gen trigger external calldata:", testCalldata);
+    // console.log("Offchain-gen trigger external calldata:", testCalldata);
 
     // Define the order data
     offchainOrder = {
@@ -363,12 +379,13 @@ describe("Marketplace Contract", function () {
       buyer: buyerAddress,
       seller: contractAccountAddress,
       toSell: {
-        daoAddress: await simpleDAO.getAddress(),
+        executeAddress: await simpleDAO.getAddress(),
         data: testCalldata,
       },
       toFulfill: {
         asset: highAddress, // high
-        amountOrTokenId: 10, // Amount (ERC20) or Token ID (ERC721)
+        ids: [0],
+        amountOrTokenIds: [10], // Amount (ERC20) or Token ID (ERC721)
       },
       deadline: Math.floor(Date.now() / 1000) + 3600, // 1-hour expiration
       fulfilled: false,
@@ -390,12 +407,13 @@ describe("Marketplace Contract", function () {
       buyer: buyerAddress,
       seller: contractAccountAddress,
       toSell: {
-        daoAddress: await simpleDAO.getAddress(),
+        executeAddress: await simpleDAO.getAddress(),
         data: testCalldata,
       },
       toFulfill: {
         asset: azukiAddress,
-        amountOrTokenId: 7737,
+        ids: [0],
+        amountOrTokenIds: [7737],
       },
       deadline: Math.floor(Date.now() / 1000) + 3600, // 1-hour expiration
       fulfilled: false,
@@ -422,12 +440,13 @@ describe("Marketplace Contract", function () {
       buyer: buyerAddress,
       seller: sellerAddress, //EOA
       toSell: {
-        daoAddress: usdcAddress,
+        executeAddress: usdcAddress,
         data: transferToSellCalldata,
       },
       toFulfill: {
         asset: highAddress, // high
-        amountOrTokenId: 10, // Amount (ERC20) or Token ID (ERC721)
+        ids: [0],
+        amountOrTokenIds: [10], // Amount (ERC20) or Token ID (ERC721)
       },
       deadline: Math.floor(Date.now() / 1000) + 3600, // 1-hour expiration
       fulfilled: false,
@@ -439,7 +458,7 @@ describe("Marketplace Contract", function () {
       offchainOrderBasicHash
     );
 
-    setupAllowanceToMarketplace();
+    await setupAllowanceToMarketplace();
     console.log(`All fixtures finished!`);
   }
 
@@ -522,34 +541,8 @@ describe("Marketplace Contract", function () {
         .be.true;
       const usdcBalance = await usdc.balanceOf(buyerAddress);
       await expect(usdcBalance).to.equal(100);
-      console.log(
-        `After basic order fulfillment, Buyer USDC balance: ${usdcBalance.toString()}`
-      );
-      //lowLevelCallExample().catch(console.error);
     });
   });
-
-  async function lowLevelCallExample() {
-    const amount = ethers.parseUnits("100", 6); // USDC typically has 6 decimals
-
-    // Populate the transaction data
-    const txData = await usdc.populateTransaction.transfer(
-      buyerAddress,
-      amount
-    );
-
-    // Send the transaction using a low-level call
-    const tx = await seller.sendTransaction({
-      to: usdcAddress,
-      data: txData.data,
-      gasLimit: 100000,
-    });
-
-    // Wait for the transaction to be mined
-    await tx.wait();
-
-    console.log("Low-level transfer call completed:", tx);
-  }
 
   describe("Function trigger order on-chain", function () {
     it("Should revert when caller is not a contract", async function () {
@@ -649,9 +642,9 @@ describe("Marketplace Contract", function () {
       var fulfilled = false;
       const tree = await constructingMerkleTree(fulfilled);
 
-      // console.log("merkle tree: ", tree);
-      // console.log("input orderhash: ", offchainOrderHash);
-      // console.log("arrayfy Order: ", flattenOrder(offchainOrder));
+      console.log("merkle tree: ", tree);
+      console.log("input orderhash: ", offchainOrderHash);
+      console.log("arrayfy Order: ", flattenOrder(offchainOrder, 0));
 
       // User confirm to upload the orders to the chain
       await marketplace.connect(seller).updateMerkleRoot(tree.root);
@@ -661,7 +654,7 @@ describe("Marketplace Contract", function () {
       const fulfillTx = await fulfillOrderWithMerkleProof(
         offchainOrder,
         sellerSignature,
-        await searchProof(tree, flattenOrder(offchainOrder))
+        await searchProof(tree, flattenOrder(offchainOrder, 0))
       );
       //console.log("fulfill tx: ", fulfillTx);
 
@@ -691,10 +684,6 @@ describe("Marketplace Contract", function () {
       const totalPlatformFee =
         ((priceInETH * (PLATFORM_FEE_BPS * FACTOR)) / (100 * FACTOR)) *
         orders.length;
-      // Approve marketplace to transfer tokens on behalf of buyer and seller
-      const marketplaceAddress = await marketplace.getAddress();
-      await high.connect(buyer).approve(marketplaceAddress, "30");
-      await usdc.connect(seller).approve(marketplaceAddress, "300");
 
       // Execute sweepOrders and verify balances
       await expect(
@@ -707,17 +696,19 @@ describe("Marketplace Contract", function () {
         .and.emit(marketplace, "OrderFulfilled")
         .withArgs(orderHashes[1], buyer.address, 0)
         .and.emit(marketplace, "OrderFulfilled")
-        .withArgs(orderHashes[2], buyer.address, 0);
+        .withArgs(orderHashes[2], buyer.address, 0)
+        .and.emit(marketplace, "OrderFulfilled")
+        .withArgs(orderHashes[3], buyer.address, 0);
 
       console.log("buyer HIGH balance: ", await high.balanceOf(buyer.address));
       console.log("buyer USDC balance: ", await usdc.balanceOf(buyer.address));
 
       console.log(
-        "seller HIGH balance: ",
+        "seller HIGH balance after sweeping orders: ",
         await high.balanceOf(seller.address)
       );
       console.log(
-        "seller USDC balance: ",
+        "seller USDC balance after sweeping orders: ",
         await usdc.balanceOf(seller.address)
       );
       // Check buyer's token balance
@@ -725,7 +716,7 @@ describe("Marketplace Contract", function () {
       const buyerBAYCBalance = await bayc.balanceOf(buyer.address);
       const buyerGOLDBalance = await gameItems.balanceOf(buyer.address, 1);
       const buyerSILVERBalance = await gameItems.balanceOf(buyer.address, 2);
-      const buyerTHORS_HAMMERBalance = await gameItems.balanceOf(
+      const buyerTHORSHAMMERBalance = await gameItems.balanceOf(
         buyer.address,
         3
       );
@@ -733,21 +724,101 @@ describe("Marketplace Contract", function () {
       expect(buyerBAYCBalance).to.equal(1);
       expect(buyerGOLDBalance).to.equal(100);
       expect(buyerSILVERBalance).to.equal(100);
-      expect(buyerTHORS_HAMMERBalance).to.equal(1);
+      expect(buyerTHORSHAMMERBalance).to.equal(1);
+      console.log(
+        `buyer USDC balance: ${buyerUSDCBalance}, buyer BAYC balance: ${buyerBAYCBalance}, buyer GOLD balance: ${buyerGOLDBalance}, buyer SILVER balance: ${buyerSILVERBalance}, buyer THORSHAMMER balance: ${buyerTHORSHAMMERBalance}`
+      );
       // Check seller's token balance
       const sellerHIGHBalance = await high.balanceOf(seller.address);
       expect(sellerHIGHBalance).to.equal(50);
     });
   });
+  describe("Withdraw", function () {
+    it("Should allow the owner to withdraw platform fees", async function () {
+      const marketplaceAddress = await marketplace.getAddress();
+      const contractBalanceBefore = await ethers.provider.getBalance(
+        marketplaceAddress
+      );
+      console.log(
+        `Contract balance before withdrawal: ${contractBalanceBefore}`
+      );
+      // Check that the owner's balance increased (considering gas fees)
+      const ownerBalanceBefore = await ethers.provider.getBalance(
+        ownerWallet.address
+      );
 
+      console.log(`Owner balance before withdrawal: ${ownerBalanceBefore}`);
+
+      // Withdraw funds by the owner
+      await marketplace.withdraw();
+
+      // Check that the contract's balance is now 0 after withdrawal
+      const contractBalanceAfterWithdraw = await ethers.provider.getBalance(
+        marketplaceAddress
+      );
+      console.log(
+        `Contract balance after withdrawal: ${contractBalanceAfterWithdraw}`
+      );
+      expect(contractBalanceAfterWithdraw).to.equal(0);
+
+      const ownerBalanceAfter = await ethers.provider.getBalance(
+        ownerWallet.address
+      );
+      console.log(`Owner balance after withdrawal: ${ownerBalanceAfter}`);
+
+      // Ensure the owner's balance increased correctly by the platform fee amount minus gas
+      expect(ownerBalanceAfter).to.be.above(ownerBalanceBefore);
+    });
+
+    it("Should not allow non-owners to withdraw", async function () {
+      // Simulate sending some ETH as platform fees to the contract
+      const platformFeeAmount = ethers.parseEther("0.5");
+      const marketplaceAddress = await marketplace.getAddress();
+      await buyer.sendTransaction({
+        to: marketplaceAddress,
+        value: platformFeeAmount,
+      });
+
+      // Try to call withdraw from a non-owner account
+      await expect(marketplace.connect(buyer).withdraw()).to.be.revertedWith(
+        "Only owner can call this function"
+      );
+    });
+
+    it("Should revert if there is no balance to withdraw", async function () {
+      // withdraw funds by the owner first
+      marketplace.withdraw();
+      // Try to call withdraw the second time
+      await expect(marketplace.withdraw()).to.be.revertedWith(
+        "No balance to withdraw"
+      );
+    });
+  });
+  describe("OracleHandler", function () {
+    it("Should revert when priceFeed is the zero address in setChainlinkPriceFeed", async function () {
+      const asset = ethers.ZeroAddress;
+      await expect(
+        oracleHandler.setChainlinkPriceFeed(asset, ethers.ZeroAddress)
+      ).to.be.revertedWith("Invalid price feed address");
+    });
+
+    it("Should revert when priceFeedAddress is not set in getLatestPriceInETH", async function () {
+      const asset = ethers.ZeroAddress;
+      await expect(oracleHandler.getLatestPriceInETH(asset)).to.be.revertedWith(
+        "Invalid price feed address"
+      );
+    });
+  });
   async function searchProof(tree: StandardMerkleTree<any>, target: any) {
     var proof;
     for (const [i, v] of tree.entries()) {
       const leafHash = ethers.solidityPackedKeccak256(getLeafEncoding(), v);
+      console.log(`leaf hash${i}: ${leafHash}`);
       const targetHash = ethers.solidityPackedKeccak256(
         getLeafEncoding(),
         target
       );
+      console.log(`target hash: ${targetHash}`);
       if (leafHash === targetHash) {
         console.log(`found proof: ${i}`);
         proof = tree.getProof(i);
@@ -769,7 +840,7 @@ describe("Marketplace Contract", function () {
 
   // Call the contract's fulfillOffchainOrder function
   async function fulfillOrder(order: any, sellerSignature: any) {
-    await setupAllowanceToMarketplace();
+    //await setupAllowanceToMarketplace();
     const tx = await marketplace.fulfillOffchainOrder(order, sellerSignature, {
       value: ethers.parseEther("0.1"), // Example value for payment
     });
@@ -784,7 +855,7 @@ describe("Marketplace Contract", function () {
     sellerSignature: any,
     proof: any
   ) {
-    await setupAllowanceToMarketplace();
+    //await setupAllowanceToMarketplace();
     const tx = await marketplace.fulfillOffchainOrderWithMerkleProof(
       order,
       sellerSignature,
@@ -807,28 +878,37 @@ describe("Marketplace Contract", function () {
   }
 
   async function setupAllowanceToMarketplace() {
-    await usdc
-      .connect(await ethers.getSigner(sellerWallet.address))
-      .approve(marketplace.getAddress(), await usdc.balanceOf(seller));
-    await high
-      .connect(await ethers.getSigner(buyerWallet.address))
-      .approve(marketplace.getAddress(), await high.balanceOf(buyer));
+    const marketplaceAddress = await marketplace.getAddress();
 
-    await bayc
+    await usdc
       .connect(seller)
-      .setApprovalForAll(marketplace.getAddress(), true);
-    await azuki
+      .approve(marketplaceAddress, await usdc.balanceOf(sellerAddress));
+    await high
       .connect(buyer)
-      .setApprovalForAll(marketplace.getAddress(), true);
-    await gameItems
-      .connect(seller)
-      .setApprovalForAll(marketplace.getAddress(), true);
+      .approve(marketplaceAddress, await high.balanceOf(buyerAddress));
+
+    await bayc.connect(seller).setApprovalForAll(marketplaceAddress, true);
+    await azuki.connect(buyer).setApprovalForAll(marketplaceAddress, true);
+    await gameItems.connect(seller).setApprovalForAll(marketplaceAddress, true);
+
+    console.log(
+      `Marketplace USDC allowance of seller: ${await usdc.allowance(
+        sellerAddress,
+        marketplaceAddress
+      )}`
+    );
+    console.log(
+      `Marketplace HIGH allowance of buyer: ${await high.allowance(
+        buyerAddress,
+        marketplaceAddress
+      )}`
+    );
   }
 
   async function setupContractAccountForDAO(
     owner: AddressLike,
     contractAccount: ContractAccount,
-    daoAddress: AddressLike,
+    executeAddress: AddressLike,
     votingToken: IERC20,
     amount: any
   ) {
@@ -856,20 +936,20 @@ describe("Marketplace Contract", function () {
     // Approve the contract account
     await contractAccount
       .connect(seller)
-      .approveVotingToken(daoAddress, amount, 0);
+      .approveVotingToken(executeAddress, amount, 0);
 
     // Check
     console.log(
-      `ContractAccount's allowance to daoAddress: ${await votingToken.allowance(
+      `ContractAccount's allowance to executeAddress: ${await votingToken.allowance(
         contractAccount,
-        daoAddress
+        executeAddress
       )},`
     );
   }
   async function setupContractAccountForDAOV2(
     owner: AddressLike,
     contractAccount: ContractAccount,
-    daoAddress: AddressLike,
+    executeAddress: AddressLike,
     votingToken: IERC20,
     amount: any,
     id: any
@@ -898,13 +978,13 @@ describe("Marketplace Contract", function () {
     // Approve the contract account
     await contractAccount
       .connect(seller)
-      .approveVotingToken(daoAddress, amount, id);
+      .approveVotingToken(executeAddress, amount, id);
 
     // Check
     console.log(
-      `ContractAccount's allowance to daoAddress: ${await votingToken.allowance(
+      `ContractAccount's allowance to executeAddress: ${await votingToken.allowance(
         contractAccount,
-        daoAddress
+        executeAddress
       )},`
     );
   }
@@ -918,10 +998,11 @@ describe("Marketplace Contract", function () {
       order.eid,
       order.buyer,
       order.seller,
-      order.toSell.daoAddress,
+      order.toSell.executeAddress,
       order.toSell.data,
       order.toFulfill.asset,
-      order.toFulfill.amountOrTokenId,
+      order.toFulfill.ids[0],
+      order.toFulfill.amountOrTokenIds[0],
       order.deadline,
       order.fulfilled,
     ]);
@@ -938,6 +1019,7 @@ describe("Marketplace Contract", function () {
       "address",
       "uint256",
       "uint256",
+      "uint256",
       "bool",
     ];
   }
@@ -949,12 +1031,13 @@ describe("Marketplace Contract", function () {
         buyer: buyerAddress,
         seller: contractAccountAddress,
         toSell: {
-          daoAddress: await simpleDAO.getAddress(),
+          executeAddress: await simpleDAO.getAddress(),
           data: testCalldata,
         },
         toFulfill: {
           asset: highAddress, // high
-          amountOrTokenId: 10, // Amount (ERC20) or Token ID (ERC721)
+          ids: [0],
+          amountOrTokenIds: [10], // Amount (ERC20) or Token ID (ERC721)
         },
         deadline: Math.floor(Date.now() / 1000) + 3600, // 1-hour expiration
         fulfilled: false,
@@ -972,12 +1055,13 @@ describe("Marketplace Contract", function () {
         buyer: buyerAddress,
         seller: contractAccountAddress,
         toSell: {
-          daoAddress: await simpleDAO.getAddress(),
+          executeAddress: await simpleDAO.getAddress(),
           data: testCalldata,
         },
         toFulfill: {
           asset: highAddress, // high
-          amountOrTokenId: 10, // Amount (ERC20) or Token ID (ERC721)
+          ids: [0],
+          amountOrTokenIds: [10], // Amount (ERC20) or Token ID (ERC721)
         },
         deadline: Math.floor(Date.now() / 1000) + 3600, // 1-hour expiration
         fulfilled: true,
@@ -988,15 +1072,16 @@ describe("Marketplace Contract", function () {
     return orders;
   }
 
-  function flattenOrder(order: any) {
+  function flattenOrder(order: any, id: number) {
     const flattenOrder = [
       order.eid,
       order.buyer,
       order.seller,
-      order.toSell.daoAddress,
+      order.toSell.executeAddress,
       order.toSell.data,
       order.toFulfill.asset,
-      order.toFulfill.amountOrTokenId,
+      order.toFulfill.ids[id],
+      order.toFulfill.amountOrTokenIds[id],
       order.deadline,
       order.fulfilled,
     ];
@@ -1038,6 +1123,7 @@ describe("Marketplace Contract", function () {
     return calldata;
   }
   function setupSweepOrders() {
+    // ERC20
     const order1 = {
       eid: 1,
       buyer: buyer.address,
@@ -1055,7 +1141,7 @@ describe("Marketplace Contract", function () {
       deadline: Math.floor(Date.now() / 1000) + 3600,
       fulfilled: false,
     };
-
+    // ERC20
     const order2 = {
       eid: 2,
       buyer: buyer.address,
@@ -1073,7 +1159,7 @@ describe("Marketplace Contract", function () {
       deadline: Math.floor(Date.now() / 1000) + 3600,
       fulfilled: false,
     };
-
+    // ERC721
     const order3 = {
       eid: 3,
       buyer: buyer.address,
@@ -1091,6 +1177,7 @@ describe("Marketplace Contract", function () {
       deadline: Math.floor(Date.now() / 1000) + 3600,
       fulfilled: false,
     };
+    // ERC1155
     const order4 = {
       eid: 4,
       buyer: buyer.address,

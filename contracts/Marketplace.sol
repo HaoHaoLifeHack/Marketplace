@@ -28,7 +28,7 @@ contract Marketplace is IMarketplace {
     uint256 private constant LIMIT = 25;
 
     event OrderCancelled(bytes32 indexed orderHash);
-    event AllOrdersCancelled(string indexed message);
+    event BatchOrdersCancelled(string indexed message);
     event OrderFulfilled(
         bytes32 indexed orderHash,
         address indexed buyer,
@@ -68,8 +68,8 @@ contract Marketplace is IMarketplace {
     // Seller cancels their own order
     function cancelMerkleOrders() external {
         require(merkleRoots[msg.sender] != 0, "The Seller has no order yet");
-        updateMerkleRoot("0x0"); //TODO: Check if the msg.sender to call the function is seller not marketplace
-        emit AllOrdersCancelled("All orders cancelled");
+        updateMerkleRoot("0x0");
+        emit BatchOrdersCancelled("All orders cancelled");
     }
 
     // Buyer brings the signed order
@@ -86,12 +86,17 @@ contract Marketplace is IMarketplace {
         address recoveredSeller = recoverSigner(orderHash, sellerSignature);
 
         // Ensure the recovered address owned the contract account
-        IContractAccount contractAccount = IContractAccount(order.seller);
-
-        require(
-            contractAccount.owner() == recoveredSeller,
-            "Invalid contract account address to fulfill offchain order"
-        );
+        if (_isContract(order.seller)) {
+            require(
+                recoveredSeller == IContractAccount(order.seller).owner(),
+                "Invalid contract account address to fulfill offchain order"
+            );
+        } else {
+            require(
+                recoveredSeller == order.seller,
+                "Invalid contract account address to fulfill offchain order"
+            );
+        }
 
         // Mark the order as fulfilled before external calls
         fulfilledOrders[orderHash] = true;
@@ -111,10 +116,10 @@ contract Marketplace is IMarketplace {
         if (_isContract(order.seller)) {
             // Function trigger order
             require(
-                contractAccount.execute(
+                IContractAccount(order.seller).execute(
                     orderHash,
                     sellerSignature,
-                    order.toSell.daoAddress,
+                    order.toSell.executeAddress,
                     order.toSell.data,
                     0
                 ),
@@ -122,21 +127,10 @@ contract Marketplace is IMarketplace {
             );
         } else {
             // Transfer toSell asset to buyer
-            (bool success, bytes memory returnData) = order
-                .toSell
-                .daoAddress
-                .call(order.toSell.data);
-            if (!success) {
-                if (returnData.length > 0) {
-                    // Decode the revert reason if it's there
-                    revert(abi.decode(returnData, (string)));
-                } else {
-                    revert(
-                        "Transfer toSell asset to buyer failed: Unknown error"
-                    );
-                }
-            }
-            //require(success, "Transfer toSell asset to buyer failed");
+            (bool success, ) = order.toSell.executeAddress.call(
+                order.toSell.data
+            );
+            require(success, "Transfer toSell asset to buyer failed");
         }
 
         // Handle asset transfers
@@ -195,7 +189,7 @@ contract Marketplace is IMarketplace {
             contractAccount.execute(
                 orderHash,
                 sellerSignature,
-                order.toSell.daoAddress,
+                order.toSell.executeAddress,
                 order.toSell.data,
                 0
             ),
@@ -219,10 +213,11 @@ contract Marketplace is IMarketplace {
                             order.eid,
                             order.buyer,
                             order.seller,
-                            order.toSell.daoAddress,
+                            order.toSell.executeAddress,
                             order.toSell.data,
                             order.toFulfill.asset,
-                            order.toFulfill.amountOrTokenId,
+                            order.toFulfill.ids,
+                            order.toFulfill.amountOrTokenIds,
                             order.deadline,
                             order.fulfilled
                         )
@@ -244,8 +239,10 @@ contract Marketplace is IMarketplace {
                             order.buyer,
                             order.seller,
                             order.toSell.asset,
+                            order.toSell.ids,
                             order.toSell.amountOrTokenIds,
                             order.toFulfill.asset,
+                            order.toFulfill.ids,
                             order.toFulfill.amountOrTokenIds,
                             order.deadline,
                             order.fulfilled
@@ -292,18 +289,11 @@ contract Marketplace is IMarketplace {
         return proof.verify(root, leaf);
     }
 
-    function withdraw() external onlyOwner {
-        require(address(this).balance > 0, "No balance to withdraw");
-        payable(owner).transfer(address(this).balance);
-        emit Withdraw(owner, address(this).balance);
-    }
-
-    // TODO: Support any token type of order
     function sweepOrders(
         OrderBasic[] memory orders,
         bytes[] memory sellerSignatures
     ) external payable {
-        uint256 totalPlatformFee = calculateTotalPlatformFee(orders);
+        uint256 totalPlatformFee = _calculateTotalPlatformFee(orders);
 
         // Ensure the sender has enough ETH to cover the total platform fee
         require(
@@ -315,7 +305,7 @@ contract Marketplace is IMarketplace {
             bytes memory sellerSignature = sellerSignatures[i];
 
             // Ensure order validity
-            validateOrder(order, sellerSignature);
+            _validateOrder(order, sellerSignature);
 
             // Mark order as fulfilled and emit an event
             bytes32 orderHash = getOrderHashBasic(order);
@@ -328,7 +318,7 @@ contract Marketplace is IMarketplace {
     }
 
     // Internal function to handle order validation
-    function validateOrder(
+    function _validateOrder(
         OrderBasic memory order,
         bytes memory sellerSignature
     ) internal view {
@@ -344,7 +334,7 @@ contract Marketplace is IMarketplace {
     }
 
     // Calculates the total platform fee for all orders
-    function calculateTotalPlatformFee(
+    function _calculateTotalPlatformFee(
         OrderBasic[] memory orders
     ) internal view returns (uint256) {
         uint256 totalPlatformFee;
@@ -362,14 +352,14 @@ contract Marketplace is IMarketplace {
     // Internal function to handle order fulfillment
     function _sweepOrder(OrderBasic memory order) internal {
         // Transfer `toSell` asset to the buyer
-        _handleAssetTransferV2(order.toSell, order.seller, msg.sender);
+        _handleAssetTransfer(order.toSell, order.seller, msg.sender);
 
         // Transfer `toFulfill` asset to the seller
-        _handleAssetTransferV2(order.toFulfill, msg.sender, order.seller);
+        _handleAssetTransfer(order.toFulfill, msg.sender, order.seller);
     }
 
     // Handles transfers for ERC20, ERC721, and ERC1155 tokens, including batch transfers
-    function _handleAssetTransferV2(
+    function _handleAssetTransfer(
         ItemV2 memory item,
         address from,
         address to
@@ -423,29 +413,12 @@ contract Marketplace is IMarketplace {
         }
     }
 
-    // Helper function to handle asset transfer
-    function _handleAssetTransfer(
-        Item memory item,
-        address from,
-        address to
-    ) internal {
-        if (isERC721(item.asset)) {
-            IERC721(item.asset).safeTransferFrom(
-                from,
-                to,
-                item.amountOrTokenId
-            );
-        } else if (isERC1155(item.asset)) {
-            IERC1155(item.asset).safeTransferFrom(
-                from,
-                to,
-                item.amountOrTokenId,
-                1,
-                ""
-            );
-        } else {
-            IERC20(item.asset).transferFrom(from, to, item.amountOrTokenId);
+    function _isContract(address account) internal view returns (bool) {
+        uint256 size;
+        assembly {
+            size := extcodesize(account) // Get the code size at the address
         }
+        return size > 0; // If size > 0, it's a contract
     }
 
     // Helper function to check if an asset is ERC721
@@ -476,12 +449,10 @@ contract Marketplace is IMarketplace {
         return isSupport;
     }
 
-    function _isContract(address account) internal view returns (bool) {
-        uint256 size;
-        assembly {
-            size := extcodesize(account) // Get the code size at the address
-        }
-        return size > 0; // If size > 0, it's a contract
+    function withdraw() external onlyOwner {
+        require(address(this).balance > 0, "No balance to withdraw");
+        payable(owner).transfer(address(this).balance);
+        emit Withdraw(owner, address(this).balance);
     }
 
     modifier onlyOwner() {

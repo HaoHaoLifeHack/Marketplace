@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.24;
 
-// Start with this template
-// this template could be modified in any kind of form
-
 interface IMarketplace {
-    //the structure of this could be changed
     struct Item {
         address asset;
         uint256 amountOrTokenId;
@@ -15,9 +11,8 @@ interface IMarketplace {
         uint256[] ids;
         uint256[] amountOrTokenIds;
     }
-    // TODO: Make a new scene for simple asset transfers (`data` = _handleTransfer asset in `address`  )
     struct Trigger {
-        address daoAddress;
+        address executeAddress;
         bytes data;
     }
     struct OrderBasic {
@@ -34,15 +29,8 @@ interface IMarketplace {
         address seller;
         address buyer;
         Trigger toSell;
-        Item toFulfill;
+        ItemV2 toFulfill;
         bool fulfilled;
         uint256 deadline;
     }
-    // function list(
-    //     Item memory toSell,
-    //     Item memory toFulfill,
-    //     uint256 deadline
-    // ) external;
-    // function cancel(uint256 eid) external;
-    // function fulfill(uint256 eid) external payable;
 }
