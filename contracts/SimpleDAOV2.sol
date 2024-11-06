@@ -8,7 +8,7 @@ import "./interfaces/IContractAccount.sol";
 
 contract SimpleDAOV2 is IDAO {
     IERC1155 public votingToken;
-    uint256 public votingTokenId; // Token ID used for voting
+    uint256 public votingTokenId; // Token used for voting
     mapping(uint256 => Proposal) public proposals; // proposalId => proposal
     uint256 public totalSupply;
     mapping(uint256 => uint256) public votes; // proposalId => votes
@@ -38,11 +38,6 @@ contract SimpleDAOV2 is IDAO {
     }
 
     function vote(uint256 proposalId, uint256 amount) external override {
-        require(
-            votes[proposalId] + amount <= threshold(),
-            "Exceeds voting threshold"
-        );
-
         // Use ERC1155's safeTransferFrom for token transfer
         votingToken.safeTransferFrom(
             msg.sender,
@@ -51,8 +46,16 @@ contract SimpleDAOV2 is IDAO {
             amount,
             ""
         );
-
         votes[proposalId] += amount;
         emit Vote(msg.sender, proposalId, amount);
+        if (votes[proposalId] >= threshold()) _executeProposal(proposalId);
+    }
+
+    function _executeProposal(uint256 proposalId) internal {
+        Proposal storage proposal = proposals[proposalId];
+        require(proposal.executed == false, "Proposal already executed");
+        proposal.executed = true;
+        (bool success, ) = proposal.executeAddr.call(proposal.data);
+        require(success, "Proposal execution failed");
     }
 }

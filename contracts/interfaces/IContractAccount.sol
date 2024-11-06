@@ -9,7 +9,6 @@ interface IContractAccount {
         bytes32 msgHash,
         bytes memory signature,
         address to,
-        bytes memory data,
-        uint256 value
-    ) external payable returns (bool);
+        bytes memory data
+    ) external payable;
 }

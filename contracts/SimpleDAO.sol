@@ -32,10 +32,6 @@ contract SimpleDAO is IDAO {
     }
 
     function vote(uint256 proposalId, uint256 amount) external override {
-        require(
-            votes[proposalId] + amount <= threshold(),
-            "Exceeds voting threshold"
-        );
         votingToken.transferFrom(msg.sender, address(this), amount);
         votes[proposalId] += amount;
         emit Vote(msg.sender, proposalId, amount);
@@ -44,11 +40,8 @@ contract SimpleDAO is IDAO {
 
     function _executeProposal(uint256 proposalId) internal {
         Proposal storage proposal = proposals[proposalId];
-        require(!proposal.executed, "Proposal already executed");
-
-        // Mark the proposal as executed
+        require(proposal.executed == false, "Proposal already executed");
         proposal.executed = true;
-
         (bool success, ) = proposal.executeAddr.call(proposal.data);
         require(success, "Proposal execution failed");
     }

@@ -52,7 +52,7 @@ contract ContractAccount is IContractAccount {
                 address(token1155) != address(0),
                 "ERC1155 token not set for DAO"
             );
-            token1155.setApprovalForAll(daoAddress, true); // ERC1155 typically uses this for approval
+            token1155.setApprovalForAll(daoAddress, true);
         }
     }
 
@@ -60,17 +60,14 @@ contract ContractAccount is IContractAccount {
         bytes32 msgHash,
         bytes memory signature,
         address to,
-        bytes memory data,
-        uint256 value
-    ) external payable override returns (bool) {
-        require(_isContract(msg.sender), "Only contract can execute");
+        bytes memory data
+    ) external payable override {
         require(
             _recoverSigner(msgHash, signature) == owner,
             "Only owner can execute"
         );
-        (bool success, ) = to.call{value: value}(data);
+        (bool success, ) = to.call{value: msg.value}(data);
         require(success, "Execution failed");
-        return success;
     }
 
     function _isContract(address account) internal view returns (bool) {

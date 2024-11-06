@@ -10,7 +10,9 @@ interface IPriceFeed {
 }
 
 contract OracleHandler {
-    mapping(address => address) public assetPriceFeeds; // Mapping of asset address to price feed
+    mapping(address => address) public assetPriceFeeds; // Mapping of asset to price feed
+    mapping(address => string) public priceFeedDenominations; // Track denomination of each price feed
+    address public wethAddress = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     IPriceFeed public usdcEthPriceFeed; // Price feed for USDC to ETH
     IPriceFeed public nftPriceFeed; // Price feed for NFTs to ETH
 
@@ -19,37 +21,64 @@ contract OracleHandler {
     }
 
     /**
-     * @dev Adds a new asset and its price feed.
-     * @param asset The pair name of the asset (e.g., USDC/ETH, USDT/ETH).
+     * @dev Adds a new asset and its price feed with its denomination.
+     * @param asset The address of the asset (e.g., USDC, USDT).
      * @param priceFeed The address of the Chainlink price feed for that asset.
+     * @param denomination The denomination of the price feed (e.g., "USD" or "ETH").
      */
-    function setChainlinkPriceFeed(address asset, address priceFeed) external {
+    function setChainlinkPriceFeed(
+        address asset,
+        address priceFeed,
+        string memory denomination
+    ) external {
         require(priceFeed != address(0), "Invalid price feed address");
+        require(
+            keccak256(abi.encodePacked(denomination)) == keccak256("USD") ||
+                keccak256(abi.encodePacked(denomination)) == keccak256("ETH"),
+            "Unsupported denomination"
+        );
+
         assetPriceFeeds[asset] = priceFeed;
+        priceFeedDenominations[asset] = denomination;
     }
 
     /**
      * @dev Converts the asset price (e.g., in USD) into ETH.
-     * @param asset The pair name of the asset (e.g., USDC/ETH, USDT/ETH) for which the price is being requested.
+     * @param asset The asset address for which the price is being requested.
      * @return The price of the asset in ETH.
      */
     function getLatestPriceInETH(
         address asset
     ) external view returns (uint256) {
+        if (_isWETH(asset)) {
+            return 1 ether;
+        }
         address priceFeedAddress = assetPriceFeeds[asset];
         require(priceFeedAddress != address(0), "Invalid price feed address");
+
         IPriceFeed assetPriceFeed = IPriceFeed(priceFeedAddress);
         uint256 assetPrice = assetPriceFeed.latestAnswer() /
-            assetPriceFeed.decimals();
+            10 ** assetPriceFeed.decimals();
         require(assetPrice > 0, "Invalid asset price from oracle");
 
-        // Convert the asset price from USD to ETH
-        if ((assetPriceFeed.decimals()) == 18) {
-            return assetPrice;
+        // Determine the denomination and apply conversion if needed
+        string memory denomination = priceFeedDenominations[asset];
+        if (keccak256(abi.encodePacked(denomination)) == keccak256("ETH")) {
+            return assetPrice; // Already denominated in ETH, return directly
+        } else if (
+            keccak256(abi.encodePacked(denomination)) == keccak256("USD")
+        ) {
+            // Convert from USD to ETH
+            uint256 ethPriceInUSD = usdcEthPriceFeed.latestAnswer();
+            require(ethPriceInUSD > 0, "Invalid ETH price from oracle");
+            return _convertToETH(assetPrice, ethPriceInUSD);
+        } else {
+            revert("Unsupported denomination");
         }
-        uint256 ethPriceInUSD = usdcEthPriceFeed.latestAnswer();
-        require(ethPriceInUSD > 0, "Invalid ETH price from oracle");
-        return _convertToETH(assetPrice, ethPriceInUSD);
+    }
+
+    function _isWETH(address asset) internal view returns (bool) {
+        return asset == wethAddress;
     }
 
     /**
