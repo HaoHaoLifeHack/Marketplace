@@ -111,7 +111,7 @@ contract Marketplace is IMarketplace {
     _validateOrder(orderHash, order.seller, sellerSignature, order.deadline);
 
     if (useMerkleProof) {
-      _verifyMerkleProof(order.seller, merkleProof, orderHash);
+      require(_verifyMerkleProof(order.seller, merkleProof, orderHash), "Invalid merkle proof");
     }
 
     return orderHash;
@@ -386,10 +386,8 @@ contract Marketplace is IMarketplace {
       return AssetType.ERC721;
     } else if (_isERC1155(asset)) {
       return AssetType.ERC1155;
-    } else if (_isERC20(asset)) {
-      return AssetType.ERC20;
     } else {
-      return AssetType.INVALID;
+      return AssetType.ERC20;
     }
   }
 
