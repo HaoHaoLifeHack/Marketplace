@@ -418,8 +418,9 @@ contract Marketplace is IMarketplace {
 
   function withdraw() external onlyOwner {
     require(address(this).balance > 0, "No balance to withdraw");
+    uint256 previousBalance = address(this).balance;
     payable(owner).transfer(address(this).balance);
-    emit Withdraw(owner, address(this).balance, block.timestamp);
+    emit Withdraw(owner, previousBalance, block.timestamp);
   }
 
   modifier onlyOwner() {

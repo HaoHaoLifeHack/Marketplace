@@ -1,19 +1,25 @@
-import { ethers } from "hardhat";
+import { ethers, network } from "hardhat";
 import { config as dotenvConfig } from "dotenv";
 import { TEST_CONFIG } from "../util/testConfig";
 
 dotenvConfig({ path: "./.env" });
 export async function deployMarketplace() {
+  await forkMainnet();
   const owner = await ethers.getSigner(TEST_CONFIG.SIGNER_ADDRESSES.OWNER);
   const seller = await ethers.getSigner(TEST_CONFIG.SIGNER_ADDRESSES.SELLER);
   const buyer = await ethers.getSigner(TEST_CONFIG.SIGNER_ADDRESSES.BUYER);
 
+  // Deploy WETH
+  const WETH = await ethers.getContractFactory("WETH");
+  const weth = await WETH.deploy();
+
   // Deploy OracleHandler
   const OracleHandler = await ethers.getContractFactory("OracleHandler", owner);
-  const oracleHandler = await OracleHandler.deploy(TEST_CONFIG.PRICE_FEEDS.USDC_ETH, {
+  const oracleHandler = await OracleHandler.deploy(TEST_CONFIG.PRICE_FEEDS.USDC_ETH, await weth.getAddress(), {
     // gasLimit: 30000000,
     // maxFeePerGas: ethers.parseUnits("20000", "gwei"), // Set higher maxFeePerGas
   });
+
   // Deploy Mock NFT Price Feed
   const MockNFTPriceFeed = await ethers.getContractFactory("NFTPriceFeed");
   const mockNFTPriceFeed = await MockNFTPriceFeed.deploy();
@@ -36,7 +42,7 @@ export async function deployMarketplace() {
 
   // Deploy Mock DAO contract
   const SimpleDAO = await ethers.getContractFactory("SimpleDAO", owner);
-  const simpleDAO = await SimpleDAO.deploy(await usdc.getAddress(), await usdc.totalSupply());
+  const simpleDAO = await SimpleDAO.deploy(await usdc.getAddress(), 10000);
 
   return {
     owner,
@@ -47,6 +53,7 @@ export async function deployMarketplace() {
     marketplace,
     high,
     usdc,
+    weth,
     bayc,
     azuki,
     mockERC1155,
@@ -54,3 +61,17 @@ export async function deployMarketplace() {
     simpleDAO,
   };
 }
+
+const forkMainnet = async () => {
+  await network.provider.request({
+    method: "hardhat_reset",
+    params: [
+      {
+        forking: {
+          jsonRpcUrl: `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`,
+          blockNumber: 20910716,
+        },
+      },
+    ],
+  });
+};

@@ -1,15 +1,15 @@
 import { ethers, network } from "hardhat";
 import { deployMarketplace } from "./deployMarketplace";
 import { TEST_CONFIG } from "../util/testConfig";
-import { IPriceFeed, OracleHandler } from "../../typechain-types";
+import { IERC1155, IPriceFeed, OracleHandler, WETH } from "../../typechain-types";
 
 export async function setupTestEnvironment() {
   // Deploy all contracts
-  var { owner, seller, buyer, mockNFTPriceFeed, oracleHandler, marketplace, high, usdc, bayc, azuki, mockERC1155, contractAccount, simpleDAO } =
+  var { owner, seller, buyer, mockNFTPriceFeed, oracleHandler, marketplace, high, usdc, weth, bayc, azuki, mockERC1155, contractAccount, simpleDAO } =
     await deployMarketplace();
 
   // Set Oracle price feed
-  oracleHandler = await setupOraclePriceFeed(oracleHandler, await mockNFTPriceFeed.getAddress());
+  oracleHandler = await setupOraclePriceFeed(oracleHandler, await mockNFTPriceFeed.getAddress(), await mockERC1155.getAddress());
 
   // Initial ETH amounts setup
   const initAddresses = [
@@ -37,10 +37,17 @@ export async function setupTestEnvironment() {
   await impersonateAndTransferNFT(azuki, TEST_CONFIG.WHALE_ADDRESSES.AZUKI, TEST_CONFIG.SIGNER_ADDRESSES.BUYER, 7737);
   await impersonateAndTransferNFT(bayc, TEST_CONFIG.WHALE_ADDRESSES.BAYC, TEST_CONFIG.SIGNER_ADDRESSES.SELLER, 2464);
 
+  // Transfer ERC1155 to buyer
+  await impersonateAndTransferERC1155(mockERC1155, TEST_CONFIG.SIGNER_ADDRESSES.SELLER, TEST_CONFIG.SIGNER_ADDRESSES.BUYER, 0, 100);
+  await impersonateAndTransferERC1155(mockERC1155, TEST_CONFIG.SIGNER_ADDRESSES.SELLER, TEST_CONFIG.SIGNER_ADDRESSES.BUYER, 1, 1000);
+
+  // Buyer deposit ETH
+  await weth.connect(buyer).deposit({ value: ethers.parseEther("10") });
+
   // Seller transfer voting tokens to CA
   await usdc.connect(seller).transfer(await contractAccount.getAddress(), ethers.parseUnits("100", 6));
 
-  await setupAllowanceToMarketplace(marketplace, seller, buyer, usdc, high, bayc, azuki, mockERC1155);
+  await setupAllowanceToMarketplace(marketplace, seller, buyer, usdc, high, weth, bayc, azuki, mockERC1155);
   return {
     owner,
     seller,
@@ -50,6 +57,7 @@ export async function setupTestEnvironment() {
     marketplace,
     high,
     usdc,
+    weth,
     bayc,
     azuki,
     mockERC1155,
@@ -58,19 +66,20 @@ export async function setupTestEnvironment() {
   };
 }
 
-async function setETHBalance(address, amount) {
+export async function setETHBalance(address, amount) {
   await network.provider.send("hardhat_setBalance", [address, ethers.toBeHex(amount).toString()]);
 }
 
-async function setupOraclePriceFeed(oracleHandler, nftPriceFeed) {
+async function setupOraclePriceFeed(oracleHandler, nftPriceFeed, mockERC1155Address) {
   const assets = [
     TEST_CONFIG.TOKEN_ADDRESSES.USDC,
     TEST_CONFIG.TOKEN_ADDRESSES.HIGH,
     TEST_CONFIG.TOKEN_ADDRESSES.BAYC,
     TEST_CONFIG.TOKEN_ADDRESSES.AZUKI,
+    mockERC1155Address,
   ];
-  const priceFeeds = [TEST_CONFIG.PRICE_FEEDS.USDC_ETH, TEST_CONFIG.PRICE_FEEDS.HIGH_USD, nftPriceFeed, nftPriceFeed];
-  const isDenoteByETHs = [true, false, true, true];
+  const priceFeeds = [TEST_CONFIG.PRICE_FEEDS.USDC_ETH, TEST_CONFIG.PRICE_FEEDS.HIGH_USD, nftPriceFeed, nftPriceFeed, nftPriceFeed];
+  const isDenoteByETHs = [true, false, true, true, true];
   for (var i = 0; i < assets.length; i++) {
     await oracleHandler.setChainlinkPriceFeed(assets[i], priceFeeds[i], isDenoteByETHs[i]);
   }
@@ -104,18 +113,31 @@ async function impersonateAndTransferNFT(nftContract, whaleAddress, recipient, t
   console.log(`${recipient} ${nftAddress} NFT tokenId ${tokenId} balance: ${await nftContract.balanceOf(recipient)}`);
 }
 
-async function setupAllowanceToMarketplace(marketplace, seller, buyer, usdc, high, bayc, azuki, mockERC1155) {
+async function impersonateAndTransferERC1155(erc1155Contract: IERC1155, whaleAddress, recipient, id, amountOrTokenId) {
+  await network.provider.request({
+    method: "hardhat_impersonateAccount",
+    params: [whaleAddress],
+  });
+  const whaleSigner = await ethers.getSigner(whaleAddress);
+  await erc1155Contract.connect(whaleSigner).safeTransferFrom(whaleAddress, recipient, id, amountOrTokenId, "0x");
+}
+
+async function setupAllowanceToMarketplace(marketplace, seller, buyer, usdc, high, weth, bayc, azuki, mockERC1155) {
   const marketplaceAddress = await marketplace.getAddress();
   const sellerAddress = await seller.getAddress();
   const buyerAddress = await buyer.getAddress();
 
   await usdc.connect(seller).approve(marketplaceAddress, await usdc.balanceOf(sellerAddress));
   await high.connect(buyer).approve(marketplaceAddress, await high.balanceOf(buyerAddress));
+  await weth.connect(buyer).approve(marketplaceAddress, await weth.balanceOf(buyerAddress));
 
   await bayc.connect(seller).setApprovalForAll(marketplaceAddress, true);
   await azuki.connect(buyer).setApprovalForAll(marketplaceAddress, true);
   await mockERC1155.connect(seller).setApprovalForAll(marketplaceAddress, true);
+  await mockERC1155.connect(buyer).setApprovalForAll(marketplaceAddress, true);
 
   console.log(`Marketplace USDC allowance of seller: ${await usdc.allowance(sellerAddress, marketplaceAddress)}`);
   console.log(`Marketplace HIGH allowance of buyer: ${await high.allowance(buyerAddress, marketplaceAddress)}`);
+  console.log(`Marketplace WETH allowance of buyer: ${await weth.allowance(buyerAddress, marketplaceAddress)}`);
+  console.log(`Buyer WETH balance: ${await weth.balanceOf(buyerAddress)}`);
 }

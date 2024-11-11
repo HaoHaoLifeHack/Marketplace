@@ -21,28 +21,30 @@ import { getFunctionTriggerCalldata, getTriggerOrder, flattenOrder } from "../ut
 import { generateMerkleTree, searchProof } from "../util/merkleTree";
 import { getProof } from "@openzeppelin/merkle-tree/dist/core";
 import { time } from "@nomicfoundation/hardhat-toolbox/network-helpers";
+import { TEST_CONFIG } from "../util/testConfig";
 
 describe("OffchainSign test", function () {
-  let owner: any,
-    seller: any,
+  let seller: any,
     buyer: any,
     marketplace: Marketplace,
     oracleHandler: OracleHandler,
+    contractAccount: ContractAccount,
+    simpleDAO: SimpleDAO,
     mockNFTPriceFeed: IPriceFeed,
     high: IERC20,
     usdc: IERC20,
+    weth: IERC20,
     bayc: IERC721,
     azuki: IERC721,
-    mockERC1155: GameItems,
-    contractAccount: ContractAccount,
-    simpleDAO: SimpleDAO;
+    mockERC1155: GameItems;
+
   let offchainOrder: OrderStruct;
   let sellerSignature: any;
   let offchainOrderHash: any;
   let merkleOrders: any[];
 
   beforeEach(async () => {
-    ({ owner, seller, buyer, oracleHandler, mockNFTPriceFeed, marketplace, high, usdc, bayc, azuki, mockERC1155, contractAccount, simpleDAO } =
+    ({ seller, buyer, oracleHandler, mockNFTPriceFeed, marketplace, high, usdc, weth, bayc, azuki, mockERC1155, contractAccount, simpleDAO } =
       await setupTestEnvironment());
 
     // Default parameters
@@ -58,7 +60,7 @@ describe("OffchainSign test", function () {
     // Prepare offchain order, signature, and hash for both tests
     offchainOrder = getTriggerOrder(buyerAddress, sellerAddress, toSell, toFulfill, deadline, false);
     offchainOrderHash = getOrderHash(offchainOrder);
-    sellerSignature = await getOrderSignature(offchainOrder);
+    sellerSignature = await getOrderSignature(offchainOrder, sellerAddress);
 
     // Prepare offchain order for merkle tree
     merkleOrders = [];
@@ -114,22 +116,64 @@ describe("OffchainSign test", function () {
       await expect(tx).to.emit(marketplace, "OrderFulfilled").withArgs(offchainOrderHash, offchainOrder.buyer, 0, timestamp);
     });
 
-    it("Should fulfill off-chain order on-chain by NFT", async function () {
-      const offchainNFTOrder = offchainOrder;
+    it("Should fulfill off-chain order with ERC721 on-chain", async function () {
+      var offchainNFTOrder = offchainOrder;
       offchainNFTOrder.toFulfill.asset = await azuki.getAddress();
       offchainNFTOrder.toFulfill.amountOrTokenIds = [7737];
       const offchainNFTOrderHash = getOrderHash(offchainNFTOrder);
-      const signature = await getOrderSignature(offchainNFTOrder);
+      const signature = await getOrderSignature(offchainNFTOrder, await seller.getAddress());
       const platformFee =
-        ((await oracleHandler.getLatestPriceInETH(offchainOrder.toFulfill.asset)) * BigInt(offchainOrder.toFulfill.amountOrTokenIds[0] * 5)) /
+        ((await oracleHandler.getLatestPriceInETH(offchainNFTOrder.toFulfill.asset)) * BigInt(offchainNFTOrder.toFulfill.amountOrTokenIds[0] * 5)) /
         BigInt(100);
       await marketplace.fulfillOffchainOrder(offchainNFTOrder, signature, { value: platformFee });
       await expect(await marketplace.fulfilledOrders(offchainNFTOrderHash)).to.be.true;
     });
+    it("Should fulfill off-chain order with single asset in ERC1155 on-chain", async function () {
+      var offchain1155Order = offchainOrder;
+      offchain1155Order.toFulfill.asset = await mockERC1155.getAddress();
+      offchain1155Order.toFulfill.ids[0] = 0;
+      offchain1155Order.toFulfill.amountOrTokenIds = [1];
+      const offchain1155OrderHash = getOrderHash(offchain1155Order);
+      const signature = await getOrderSignature(offchain1155Order, await seller.getAddress());
+
+      const platformFee =
+        ((await oracleHandler.getLatestPriceInETH(offchain1155Order.toFulfill.asset)) * BigInt(offchain1155Order.toFulfill.amountOrTokenIds[0] * 5)) /
+        BigInt(100);
+      await marketplace.fulfillOffchainOrder(offchain1155Order, signature, { value: platformFee });
+      await expect(await marketplace.fulfilledOrders(offchain1155OrderHash)).to.be.true;
+    });
+    it("Should fulfill off-chain order with batch asset in ERC1155 on-chain", async function () {
+      var offchain1155Order = offchainOrder;
+      offchain1155Order.toFulfill.asset = await mockERC1155.getAddress();
+      offchain1155Order.toFulfill.ids[0] = 0;
+      offchain1155Order.toFulfill.ids[1] = 1;
+      offchain1155Order.toFulfill.amountOrTokenIds = [1, 1];
+      const offchain1155OrderHash = getOrderHash(offchain1155Order);
+      const signature = await getOrderSignature(offchain1155Order, await seller.getAddress());
+
+      const platformFee =
+        ((await oracleHandler.getLatestPriceInETH(offchain1155Order.toFulfill.asset)) * BigInt(offchain1155Order.toFulfill.amountOrTokenIds[0] * 5)) /
+        BigInt(100);
+      await marketplace.fulfillOffchainOrder(offchain1155Order, signature, { value: platformFee });
+      await expect(await marketplace.fulfilledOrders(offchain1155OrderHash)).to.be.true;
+    });
+    it("Should fulfill off-chain order with WETH on-chain", async function () {
+      var offchainWETHOrder = offchainOrder;
+      offchainWETHOrder.toFulfill.asset = await weth.getAddress();
+      offchainWETHOrder.toFulfill.amountOrTokenIds = [1];
+      const offchainWETHOrderOrderHash = getOrderHash(offchainWETHOrder);
+      const signature = await getOrderSignature(offchainWETHOrder, await seller.getAddress());
+
+      const platformFee =
+        ((await oracleHandler.getLatestPriceInETH(offchainWETHOrder.toFulfill.asset)) * BigInt(offchainWETHOrder.toFulfill.amountOrTokenIds[0] * 5)) /
+        BigInt(100);
+      await marketplace.fulfillOffchainOrder(offchainWETHOrder, signature, { value: platformFee });
+      await expect(await marketplace.fulfilledOrders(offchainWETHOrderOrderHash)).to.be.true;
+    });
     it("Should not fulfill a expired order", async function () {
-      const expiredOrder: OrderStruct = offchainOrder;
+      var expiredOrder: OrderStruct = offchainOrder;
       expiredOrder.deadline = 0;
-      const sellerSignature = await getOrderSignature(expiredOrder);
+      const sellerSignature = await getOrderSignature(expiredOrder, await seller.getAddress());
       await expect(marketplace.fulfillOffchainOrder(expiredOrder, sellerSignature)).to.be.revertedWith("Order expired");
     });
     it("Should not fulfill a canceled order", async function () {
@@ -147,7 +191,7 @@ describe("OffchainSign test", function () {
       const tree = await generateMerkleTree(merkleOrders);
       await marketplace.connect(seller).updateMerkleRoot(tree.root);
       const orderHash = getOrderHash(merkleOrders[0]);
-      const signature = await getOrderSignature(merkleOrders[0]);
+      const signature = await getOrderSignature(merkleOrders[0], await seller.getAddress());
       const proof = await searchProof(tree, flattenOrder(merkleOrders[0]));
       const platformFee =
         ((await oracleHandler.getLatestPriceInETH(offchainOrder.toFulfill.asset)) * BigInt(offchainOrder.toFulfill.amountOrTokenIds[0] * 5)) /
@@ -162,7 +206,7 @@ describe("OffchainSign test", function () {
       const tree = await generateMerkleTree(merkleOrders);
       await marketplace.connect(seller).updateMerkleRoot(tree.root);
       const orderHash = getOrderHash(merkleOrders[0]);
-      const signature = await getOrderSignature(merkleOrders[0]);
+      const signature = await getOrderSignature(merkleOrders[0], await seller.getAddress());
       const proof = tree.getProof(2);
       const platformFee =
         ((await oracleHandler.getLatestPriceInETH(offchainOrder.toFulfill.asset)) * BigInt(offchainOrder.toFulfill.amountOrTokenIds[0] * 5)) /

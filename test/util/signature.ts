@@ -3,6 +3,7 @@ import "../../typechain-types";
 import { BytesLike } from "@openzeppelin/merkle-tree/dist/bytes";
 import { defaultAbiCoder } from "@ethersproject/abi";
 import { keccak256 } from "@ethersproject/keccak256";
+import { TEST_CONFIG } from "./testConfig";
 
 export interface OrderStruct {
   eid: bigint;
@@ -14,14 +15,13 @@ export interface OrderStruct {
   deadline: bigint;
 }
 
-export async function getOrderSignature(orderData: OrderStruct): Promise<string> {
-  const signer = await ethers.getSigner(orderData.seller);
+export async function getOrderSignature(orderData: any, signerAddress: string): Promise<string> {
+  const signer = await ethers.getSigner(signerAddress);
   const messageHash = getOrderHash(orderData);
-
   return await signer.signMessage(ethers.toBeArray(messageHash));
 }
 
-export async function verifyOrderSignature(orderData: OrderStruct, signature: string): Promise<boolean> {
+export async function verifyOrderSignature(orderData: any, signature: string): Promise<boolean> {
   const messageHash = getOrderHash(orderData);
   const messageBytes = ethers.toBeArray(messageHash);
   const recoveredAddress = await ethers.verifyMessage(messageBytes, signature);

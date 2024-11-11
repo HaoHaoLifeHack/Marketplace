@@ -13,13 +13,14 @@ contract OracleHandler {
   address public owner;
   mapping(address => address) public assetPriceFeeds; // Mapping of asset to price feed
   mapping(address => bool) public denoteETHStatus; // Track denomination of each price feed
-  address public wethAddress = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+  address public wethAddress;
   IPriceFeed public usdcEthPriceFeed; // Price feed for USDC to ETH
   IPriceFeed public nftPriceFeed; // Price feed for NFTs to ETH
 
-  constructor(IPriceFeed _usdcEthPriceFeed) {
+  constructor(IPriceFeed _usdcEthPriceFeed, address _wethAddress) {
     owner = msg.sender;
     usdcEthPriceFeed = _usdcEthPriceFeed;
+    wethAddress = _wethAddress;
   }
 
   /**
@@ -93,16 +94,6 @@ contract OracleHandler {
 
   function _isWETH(address asset) internal view returns (bool) {
     return asset == wethAddress;
-  }
-
-  /**
-   * @dev Converts USD to ETH using the latest ETH price in USD.
-   * @param assetPrice The asset price in USD.
-   * @param ethPriceInUSD The ETH price in USD.
-   * @return The asset price in ETH.
-   */
-  function _convertToETH(uint256 assetPrice, uint256 ethPriceInUSD) internal pure returns (uint256) {
-    return (assetPrice * 1e18) / ethPriceInUSD; // Convert with 18 decimals
   }
 
   modifier onlyOwner() {
