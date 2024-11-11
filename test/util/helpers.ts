@@ -80,16 +80,16 @@ export function getFunctionTriggerCalldata(executeContract: any, functionName: s
   return calldata;
 }
 
-function flattenOrder(order: any) {
+export function flattenOrder(order: any) {
   const flattenOrder = [
     order.eid,
     order.buyer,
     order.seller,
     order.toSell.executeAddress,
     order.toSell.data,
-    order.toFulfill.asset[0],
-    order.toFulfill.ids[0],
-    order.toFulfill.amountOrTokenIds[0],
+    order.toFulfill.asset,
+    order.toFulfill.ids,
+    order.toFulfill.amountOrTokenIds,
     order.deadline,
     order.fulfilled,
   ];

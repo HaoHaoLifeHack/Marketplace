@@ -3,7 +3,8 @@ import "../../typechain-types";
 import { BytesLike } from "@openzeppelin/merkle-tree/dist/bytes";
 import { defaultAbiCoder } from "@ethersproject/abi";
 import { keccak256 } from "@ethersproject/keccak256";
-interface OrderStruct {
+
+export interface OrderStruct {
   eid: bigint;
   buyer: string;
   seller: string;
@@ -13,7 +14,7 @@ interface OrderStruct {
   deadline: bigint;
 }
 
-export async function generateOrderSignature(orderData: OrderStruct): Promise<string> {
+export async function getOrderSignature(orderData: OrderStruct): Promise<string> {
   const signer = await ethers.getSigner(orderData.seller);
   const messageHash = getOrderHash(orderData);
 

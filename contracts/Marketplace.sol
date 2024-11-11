@@ -37,7 +37,7 @@ contract Marketplace is IMarketplace {
 
   function cancelMerkleOrders() external {
     require(merkleRoots[msg.sender] != 0, "The Seller has no order yet");
-    updateMerkleRoot("0x0");
+    merkleRoots[msg.sender] = 0x0;
   }
 
   function updateMerkleRoot(bytes32 newMerkleRoot) public {
@@ -68,10 +68,7 @@ contract Marketplace is IMarketplace {
     fulfilledOrders[orderHash] = true;
 
     // Calculate and require platform fee payment
-    uint256 platformFee = _calculatePlatformFee(
-      order.toFulfill.asset,
-      order.toFulfill.amountOrTokenIds[0] //TODO: Check with Tsung
-    );
+    uint256 platformFee = _calculatePlatformFee(order.toFulfill.asset, order.toFulfill.amountOrTokenIds[0]);
     require(msg.value >= platformFee, "Insufficient ETH for platform fee");
 
     // Execute the order based on seller type (contract or EOA)
@@ -85,7 +82,7 @@ contract Marketplace is IMarketplace {
 
   function _calculatePlatformFee(address asset, uint256 amount) internal view returns (uint256) {
     uint256 priceInETH = oracleHandler.getLatestPriceInETH(asset);
-    return (priceInETH * amount * PLATFORM_FEE_BPS * FACTOR) / (100 * FACTOR);
+    return ((priceInETH * amount * PLATFORM_FEE_BPS * FACTOR) / (100 * FACTOR)) / 1e18;
   }
 
   function _recoverSigner(bytes32 hash, bytes memory signature) internal pure returns (address) {
