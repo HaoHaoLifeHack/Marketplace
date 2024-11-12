@@ -113,7 +113,7 @@ describe("Function trigger test", function () {
 
       //TODO: check
       await expect(marketplace.fulfillOffchainOrder(offchainTriggerOrder2, signature2, { value: platformFee2 })).to.be.revertedWith(
-        "Proposal already executed"
+        "Execution failed"
       );
     });
   });

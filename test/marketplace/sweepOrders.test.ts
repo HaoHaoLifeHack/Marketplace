@@ -7,11 +7,8 @@ import { Marketplace, OracleHandler, NFTPriceFeed, ContractAccount, SimpleDAO, G
 import { IERC20 } from "../../typechain-types/@openzeppelin/contracts/token/ERC20/IERC20";
 import { IERC721 } from "../../typechain-types/@openzeppelin/contracts/token/ERC721/IERC721";
 import { IERC1155 } from "../../typechain-types/@openzeppelin/contracts/token/ERC1155/IERC1155";
-import { getOrderHash } from "../util/signature";
-import { getFunctionTriggerCalldata, getBasicOrder } from "../util/helpers";
-import { generateMerkleTree, searchProof } from "../util/merkleTree";
-import { getProof } from "@openzeppelin/merkle-tree/dist/core";
 import { TEST_CONFIG } from "../util/testConfig";
+import { getBasicOrder, getUniqueERC20Orders } from "../util/helpers";
 
 describe("Sweep order", function () {
   let seller: any,
@@ -47,99 +44,116 @@ describe("Sweep order", function () {
     sellerSignature = await getOrderSignature(offchainOrder, signer);
   });
 
-  it.only("Should sweep multiple basic orders combined with ERC721 or ERC1155 by sweepOrders", async function () {
+  it("Should revert if msg.value less than platform fee required", async function () {
     // Set up diverse orders
     const isOnlyERC20 = false;
     offchainBasicOrders = await setupDiverseOrders(isOnlyERC20);
-    console.log(`offcahinBasicOrders: ${JSON.stringify(offchainBasicOrders)}`);
+
     for (let i = 0; i < offchainBasicOrders.length; i++) {
       offchainBasicSignatures.push(await getOrderSignature(offchainBasicOrders[i], TEST_CONFIG.SIGNER_ADDRESSES.SELLER));
     }
 
+    // Execute sweepOrders
+    await expect(marketplace.connect(buyer).sweepOrders(offchainBasicOrders, offchainBasicSignatures, { value: 0 })).to.be.revertedWith(
+      "Insufficient ETH for platform fee"
+    );
+  });
+
+  it("Should sweep multiple basic orders combined with ERC721 or ERC1155 by sweepOrders", async function () {
+    // Set up diverse orders
+    const isOnlyERC20 = false;
+    const offchainBasicOrders = await setupDiverseOrders(isOnlyERC20);
+    const offchainBasicSignatures = [];
     // Calculate total platform fee
-    // const PLATFORM_FEE_BPS = 5;
-    // const FACTOR = 100000000;
-    // const priceInETH = mockNFTPriceFeed.latestAnswer();
-    // const totalPlatformFee = BigInt(((priceInETH * (PLATFORM_FEE_BPS * FACTOR)) / (100 * FACTOR)) * offchainBasicOrders.length);
-    const totalPlatformFee = ethers.parseEther("10");
+    let totalPlatformFee = BigInt(0);
+    for (let i = 0; i < offchainBasicOrders.length; i++) {
+      offchainBasicSignatures.push(await getOrderSignature(offchainBasicOrders[i], TEST_CONFIG.SIGNER_ADDRESSES.SELLER));
+      const latestAnswer = await oracleHandler.getLatestPriceInETH(offchainBasicOrders[i].toFulfill.asset);
+      totalPlatformFee += (latestAnswer * BigInt(offchainBasicOrders[i].toFulfill.amountOrTokenIds[0] * 5)) / BigInt(100);
+    }
 
     // Execute sweepOrders and verify balances
     await marketplace.connect(buyer).sweepOrders(offchainBasicOrders, offchainBasicSignatures, { value: totalPlatformFee });
-    //   .to.emit(marketplace, "OrderFulfilled")
-    //   .withArgs(orderHashes[0], TEST_CONFIG.SIGNER_ADDRESSES.BUYER, totalPlatformFee)
-    //   .and.emit(marketplace, "OrderFulfilled")
-    //   .withArgs(orderHashes[1], TEST_CONFIG.SIGNER_ADDRESSES.BUYER, totalPlatformFee)
-    //   .and.emit(marketplace, "OrderFulfilled")
-    //   .withArgs(orderHashes[2], TEST_CONFIG.SIGNER_ADDRESSES.BUYER, totalPlatformFee)
-    //   .and.emit(marketplace, "OrderFulfilled")
-    //   .withArgs(orderHashes[3], TEST_CONFIG.SIGNER_ADDRESSES.BUYER, totalPlatformFee);
 
-    console.log("buyer HIGH balance: ", await high.balanceOf(buyer.address));
-    console.log("buyer USDC balance: ", await usdc.balanceOf(buyer.address));
-
-    console.log("seller HIGH balance after sweeping orders: ", await high.balanceOf(seller.address));
-    console.log("seller USDC balance after sweeping orders: ", await usdc.balanceOf(seller.address));
     // Check buyer's token balance
     const buyerUSDCBalance = await usdc.balanceOf(buyer.address);
     const buyerBAYCBalance = await bayc.balanceOf(buyer.address);
     const buyerGOLDBalance = await mockERC1155.balanceOf(buyer.address, 0);
     const buyerSILVERBalance = await mockERC1155.balanceOf(buyer.address, 1);
     const buyerTHORSHAMMERBalance = await mockERC1155.balanceOf(buyer.address, 2);
-    //expect(buyerUSDCBalance).to.equal(300);
-    // expect(buyerBAYCBalance).to.equal(1);
-    // expect(buyerGOLDBalance).to.equal(200);
-    // expect(buyerSILVERBalance).to.equal(1100);
-    // expect(buyerTHORSHAMMERBalance).to.equal(1);
-    console.log(
-      `buyer USDC balance: ${buyerUSDCBalance}, buyer BAYC balance: ${buyerBAYCBalance}, buyer GOLD balance: ${buyerGOLDBalance}, buyer SILVER balance: ${buyerSILVERBalance}, buyer THORSHAMMER balance: ${buyerTHORSHAMMERBalance}`
-    );
+    expect(buyerUSDCBalance).to.equal(400);
+    expect(buyerBAYCBalance).to.equal(1);
+    expect(buyerGOLDBalance).to.equal(200);
+    expect(buyerSILVERBalance).to.equal(1100);
+    expect(buyerTHORSHAMMERBalance).to.equal(1);
+
     // Check seller's token balance
     const sellerHIGHBalance = await high.balanceOf(seller.address);
-    //expect(sellerHIGHBalance).to.equal(50);
+    expect(sellerHIGHBalance).to.equal(70);
   });
 
   it("Should sweep multiple basic orders by sweepERC20Orders", async function () {
     // Set up diverse orders
     const isOnlyERC20 = true;
     offchainERC20Orders = await setupDiverseOrders(isOnlyERC20);
-    console.log(`offchainERC20Orders: ${JSON.stringify(offchainERC20Orders)}`);
-    for (let i = 0; i < offchainERC20Orders.length; i++) {
-      offchainERC20Signatures.push(await getOrderSignature(offchainERC20Orders[i], TEST_CONFIG.SIGNER_ADDRESSES.SELLER));
-    }
 
     // Calculate total platform fee
-    // const PLATFORM_FEE_BPS = 5;
-    // const FACTOR = 100000000;
-    // const priceInETH = mockNFTPriceFeed.latestAnswer();
-    // const totalPlatformFee = BigInt(((priceInETH * (PLATFORM_FEE_BPS * FACTOR)) / (100 * FACTOR)) * offchainBasicOrders.length);
-    const totalPlatformFee = ethers.parseEther("10");
+    let totalPlatformFee = BigInt(0);
+    for (let i = 0; i < offchainERC20Orders.length; i++) {
+      offchainERC20Signatures.push(await getOrderSignature(offchainERC20Orders[i], TEST_CONFIG.SIGNER_ADDRESSES.SELLER));
+      const latestAnswer = await oracleHandler.getLatestPriceInETH(offchainERC20Orders[i].toFulfill.asset);
+      totalPlatformFee += (latestAnswer * BigInt(offchainERC20Orders[i].toFulfill.amountOrTokenIds[0] * 5)) / BigInt(100);
+    }
 
     // Execute sweepOrders and verify balances
-    await expect(marketplace.connect(buyer).sweepERC20Orders(offchainERC20Orders, offchainERC20Signatures, { value: totalPlatformFee }));
+    await marketplace.connect(buyer).sweepERC20Orders(offchainERC20Orders, offchainERC20Signatures, { value: totalPlatformFee });
 
-    console.log("buyer HIGH balance: ", await high.balanceOf(buyer.address));
-    console.log("buyer USDC balance: ", await usdc.balanceOf(buyer.address));
-
-    console.log("seller HIGH balance after sweeping orders: ", await high.balanceOf(seller.address));
-    console.log("seller USDC balance after sweeping orders: ", await usdc.balanceOf(seller.address));
     // Check buyer's token balance
     const buyerUSDCBalance = await usdc.balanceOf(buyer.address);
-    const buyerBAYCBalance = await bayc.balanceOf(buyer.address);
-    const buyerGOLDBalance = await mockERC1155.balanceOf(buyer.address, 0);
-    const buyerSILVERBalance = await mockERC1155.balanceOf(buyer.address, 1);
-    const buyerTHORSHAMMERBalance = await mockERC1155.balanceOf(buyer.address, 2);
-    //expect(buyerUSDCBalance).to.equal(300);
-    // expect(buyerBAYCBalance).to.equal(1);
-    // expect(buyerGOLDBalance).to.equal(200);
-    // expect(buyerSILVERBalance).to.equal(1100);
-    // expect(buyerTHORSHAMMERBalance).to.equal(1);
-    console.log(
-      `buyer USDC balance: ${buyerUSDCBalance}, buyer BAYC balance: ${buyerBAYCBalance}, buyer GOLD balance: ${buyerGOLDBalance}, buyer SILVER balance: ${buyerSILVERBalance}, buyer THORSHAMMER balance: ${buyerTHORSHAMMERBalance}`
-    );
+    expect(buyerUSDCBalance).to.equal(400);
+
     // Check seller's token balance
     const sellerHIGHBalance = await high.balanceOf(seller.address);
-    //expect(sellerHIGHBalance).to.equal(50);
+    expect(sellerHIGHBalance).to.equal(40);
   });
+
+  it("Should only sweep multiple basic orders combined by ERC20 Token", async function () {
+    // Set up diverse orders
+    const isOnlyERC20 = false;
+    const offchainBasicOrders = await setupDiverseOrders(isOnlyERC20);
+    const offchainBasicSignatures = [];
+
+    // Calculate total platform fee
+    let totalPlatformFee = BigInt(0);
+    for (let i = 0; i < offchainBasicOrders.length; i++) {
+      offchainBasicSignatures.push(await getOrderSignature(offchainBasicOrders[i], TEST_CONFIG.SIGNER_ADDRESSES.SELLER));
+      const latestAnswer = await oracleHandler.getLatestPriceInETH(offchainBasicOrders[i].toFulfill.asset);
+      totalPlatformFee += (latestAnswer * BigInt(offchainBasicOrders[i].toFulfill.amountOrTokenIds[0] * 5)) / BigInt(100);
+    }
+
+    // Execute sweepOrders
+    await expect(
+      marketplace.connect(buyer).sweepERC20Orders(offchainBasicOrders, offchainBasicSignatures, { value: totalPlatformFee })
+    ).to.be.revertedWith("Only ERC20 tokens allowed");
+  });
+
+  it("Should not sweep when overing 10 types of token", async function () {
+    const offchainUniqueOrders = getUniqueERC20Orders();
+    const offchainUniqueSignatures = [];
+    //console.log(`offchainBasicOrders length: ${JSON.stringify(offchainUniqueOrders.length)}`);
+
+    // Calculate total platform fee
+    let totalPlatformFee = BigInt(0);
+    for (let i = 0; i < offchainUniqueOrders.length; i++) {
+      offchainUniqueSignatures.push(await getOrderSignature(offchainUniqueOrders[i], TEST_CONFIG.SIGNER_ADDRESSES.SELLER));
+      const latestAnswer = await oracleHandler.getLatestPriceInETH(offchainUniqueOrders[i].toFulfill.asset);
+      totalPlatformFee += (latestAnswer * BigInt(offchainUniqueOrders[i].toFulfill.amountOrTokenIds[0] * 5)) / BigInt(100);
+    }
+
+    // Execute sweepOrders
+    await expect(marketplace.connect(buyer).sweepOrders(offchainUniqueOrders, offchainUniqueSignatures, { value: totalPlatformFee })).to.be.reverted;
+  });
+
   async function setupDiverseOrders(isOnlyERC20) {
     // ERC20 1
     const toSellERC20 = {
@@ -226,8 +240,5 @@ describe("Sweep order", function () {
       fulfilled
     );
     return isOnlyERC20 ? [order1, order2] : [order1, order2, order3, order4];
-    // return [order1, order3, order4];
-    // return [order1, order3, order4];
-    // return [ order3, order4];
   }
 });

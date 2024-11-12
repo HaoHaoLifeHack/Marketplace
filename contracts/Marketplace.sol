@@ -255,7 +255,7 @@ contract Marketplace is IMarketplace {
     }
 
     // Perform aggregated transfers for each unique ERC20 token
-    _sweepERC20Orders(erc20TokensToSell, erc20ToSellTotalAmounts, new address[](erc20TokensToSell.length), true); // Transfer toSell to buyer
+    _sweepERC20Orders(erc20TokensToSell, erc20ToSellTotalAmounts, sellerToFulfill, true); // Transfer toSell to buyer
     _sweepERC20Orders(erc20TokensToFulfill, erc20ToFulfillTotalAmounts, sellerToFulfill, false); // Transfer toFulfill to seller
   }
 
@@ -295,6 +295,7 @@ contract Marketplace is IMarketplace {
         sellTokenCount,
         MAX_DISTINCT_TOKENS
       );
+
       (fulfillTokenCount, sellerToFulfill, erc20TokensToFulfill, erc20ToFulfillTotalAmounts) = _aggregateToken(
         sellerToFulfill,
         order.seller,
@@ -307,7 +308,7 @@ contract Marketplace is IMarketplace {
       );
     }
 
-    _sweepERC20Orders(erc20TokensToSell, erc20ToSellTotalAmounts, new address[](erc20TokensToSell.length), true); // Transfer toSell to buyer
+    _sweepERC20Orders(erc20TokensToSell, erc20ToSellTotalAmounts, sellerToFulfill, true); // Transfer toSell to buyer
     _sweepERC20Orders(erc20TokensToFulfill, erc20ToFulfillTotalAmounts, sellerToFulfill, false); // Transfer toFulfill to seller
   }
 
@@ -344,9 +345,7 @@ contract Marketplace is IMarketplace {
       if (totalAmount > 0) {
         address to = isToBuyer ? msg.sender : primaryAddress[i];
         address from = isToBuyer ? primaryAddress[i] : msg.sender;
-        console.log("transfrom");
-        console.logAddress(from);
-        console.logAddress(to);
+
         require(IERC20(tokens[i]).transferFrom(from, to, totalAmount), "ERC20 transfer failed");
       }
     }

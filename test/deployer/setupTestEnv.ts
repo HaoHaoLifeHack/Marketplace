@@ -26,8 +26,6 @@ export async function setupTestEnvironment() {
   // Log contract account and DAO balance
   const usdcInitAmount = ethers.parseUnits("1000", 6);
   const highInitAmount = ethers.parseUnits("1000", 18);
-  console.log("Contract Account ETH balance: ", await ethers.provider.getBalance(await contractAccount.getAddress()));
-  console.log("DAO ETH balance: ", await ethers.provider.getBalance(await simpleDAO.getAddress()));
 
   // Impersonate whales and transfer tokens
   await impersonateAndTransfer(usdc, TEST_CONFIG.WHALE_ADDRESSES.USDC, TEST_CONFIG.SIGNER_ADDRESSES.SELLER, usdcInitAmount);
@@ -99,7 +97,7 @@ async function impersonateAndTransfer(token, whaleAddress, recipient, amount) {
 
   await token.connect(whaleSigner).transfer(recipient, transferAmount);
   const tokenAddress = await token.getAddress();
-  console.log(`${recipient} ${tokenAddress} balance: ${await token.balanceOf(recipient)}`);
+  //console.log(`${recipient} ${tokenAddress} balance: ${await token.balanceOf(recipient)}`);
 }
 
 async function impersonateAndTransferNFT(nftContract, whaleAddress, recipient, tokenId) {
@@ -110,7 +108,7 @@ async function impersonateAndTransferNFT(nftContract, whaleAddress, recipient, t
   const whaleSigner = await ethers.getSigner(whaleAddress);
   await nftContract.connect(whaleSigner).safeTransferFrom(whaleAddress, recipient, tokenId);
   const nftAddress = await nftContract.getAddress();
-  console.log(`${recipient} ${nftAddress} NFT tokenId ${tokenId} balance: ${await nftContract.balanceOf(recipient)}`);
+  //console.log(`${recipient} ${nftAddress} NFT tokenId ${tokenId} balance: ${await nftContract.balanceOf(recipient)}`);
 }
 
 async function impersonateAndTransferERC1155(erc1155Contract: IERC1155, whaleAddress, recipient, id, amountOrTokenId) {
@@ -136,7 +134,7 @@ async function setupAllowanceToMarketplace(marketplace, seller, buyer, usdc, hig
   await mockERC1155.connect(seller).setApprovalForAll(marketplaceAddress, true);
   await mockERC1155.connect(buyer).setApprovalForAll(marketplaceAddress, true);
 
-  console.log(`Marketplace USDC allowance of seller: ${await usdc.allowance(sellerAddress, marketplaceAddress)}`);
-  console.log(`Marketplace HIGH allowance of buyer: ${await high.allowance(buyerAddress, marketplaceAddress)}`);
-  console.log(`Marketplace WETH allowance of buyer: ${await weth.allowance(buyerAddress, marketplaceAddress)}`);
+  // console.log(`Marketplace USDC allowance of seller: ${await usdc.allowance(sellerAddress, marketplaceAddress)}`);
+  // console.log(`Marketplace HIGH allowance of buyer: ${await high.allowance(buyerAddress, marketplaceAddress)}`);
+  // console.log(`Marketplace WETH allowance of buyer: ${await weth.allowance(buyerAddress, marketplaceAddress)}`);
 }
