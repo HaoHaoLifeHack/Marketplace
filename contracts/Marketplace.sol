@@ -202,6 +202,7 @@ contract Marketplace is IMarketplace {
     require(msg.value >= totalPlatformFee, "Insufficient ETH for platform fee");
 
     uint256 MAX_DISTINCT_TOKENS = 10;
+    address[] memory sellerToFulfill = new address[](MAX_DISTINCT_TOKENS);
     address[] memory erc20TokensToSell = new address[](MAX_DISTINCT_TOKENS);
     address[] memory erc20TokensToFulfill = new address[](MAX_DISTINCT_TOKENS);
     uint256[] memory erc20ToSellTotalAmounts = new uint256[](MAX_DISTINCT_TOKENS);
@@ -223,7 +224,9 @@ contract Marketplace is IMarketplace {
 
       // Aggregate sell and fulfill assets
       if (toSellType == AssetType.ERC20) {
-        (sellTokenCount, erc20TokensToSell, erc20ToSellTotalAmounts) = _aggregateToken(
+        (sellTokenCount, sellerToFulfill, erc20TokensToSell, erc20ToSellTotalAmounts) = _aggregateToken(
+          sellerToFulfill,
+          order.seller,
           erc20TokensToSell,
           erc20ToSellTotalAmounts,
           order.toSell.asset,
@@ -236,7 +239,9 @@ contract Marketplace is IMarketplace {
       }
 
       if (toFulfillType == AssetType.ERC20) {
-        (fulfillTokenCount, erc20TokensToFulfill, erc20ToFulfillTotalAmounts) = _aggregateToken(
+        (fulfillTokenCount, sellerToFulfill, erc20TokensToFulfill, erc20ToFulfillTotalAmounts) = _aggregateToken(
+          sellerToFulfill,
+          order.seller,
           erc20TokensToFulfill,
           erc20ToFulfillTotalAmounts,
           order.toFulfill.asset,
@@ -250,8 +255,8 @@ contract Marketplace is IMarketplace {
     }
 
     // Perform aggregated transfers for each unique ERC20 token
-    _sweepERC20Orders(erc20TokensToSell, erc20ToSellTotalAmounts, msg.sender, true); // Transfer toSell to buyer
-    _sweepERC20Orders(erc20TokensToFulfill, erc20ToFulfillTotalAmounts, msg.sender, false); // Transfer toFulfill to seller
+    _sweepERC20Orders(erc20TokensToSell, erc20ToSellTotalAmounts, new address[](erc20TokensToSell.length), true); // Transfer toSell to buyer
+    _sweepERC20Orders(erc20TokensToFulfill, erc20ToFulfillTotalAmounts, sellerToFulfill, false); // Transfer toFulfill to seller
   }
 
   function sweepERC20Orders(OrderBasic[] memory orders, bytes[] memory sellerSignatures) external payable {
@@ -259,6 +264,7 @@ contract Marketplace is IMarketplace {
     require(msg.value >= totalPlatformFee, "Insufficient ETH for platform fee");
 
     uint256 MAX_DISTINCT_TOKENS = 10;
+    address[] memory sellerToFulfill = new address[](MAX_DISTINCT_TOKENS);
     address[] memory erc20TokensToSell = new address[](MAX_DISTINCT_TOKENS);
     address[] memory erc20TokensToFulfill = new address[](MAX_DISTINCT_TOKENS);
     uint256[] memory erc20ToSellTotalAmounts = new uint256[](MAX_DISTINCT_TOKENS);
@@ -279,7 +285,9 @@ contract Marketplace is IMarketplace {
       emit OrderFulfilled(orderHash, order.buyer, totalPlatformFee, block.timestamp);
 
       // Aggregate `toSell` and `toFulfill` assets
-      (sellTokenCount, erc20TokensToSell, erc20ToSellTotalAmounts) = _aggregateToken(
+      (sellTokenCount, sellerToFulfill, erc20TokensToSell, erc20ToSellTotalAmounts) = _aggregateToken(
+        sellerToFulfill,
+        order.seller,
         erc20TokensToSell,
         erc20ToSellTotalAmounts,
         order.toSell.asset,
@@ -287,7 +295,9 @@ contract Marketplace is IMarketplace {
         sellTokenCount,
         MAX_DISTINCT_TOKENS
       );
-      (fulfillTokenCount, erc20TokensToFulfill, erc20ToFulfillTotalAmounts) = _aggregateToken(
+      (fulfillTokenCount, sellerToFulfill, erc20TokensToFulfill, erc20ToFulfillTotalAmounts) = _aggregateToken(
+        sellerToFulfill,
+        order.seller,
         erc20TokensToFulfill,
         erc20ToFulfillTotalAmounts,
         order.toFulfill.asset,
@@ -297,39 +307,46 @@ contract Marketplace is IMarketplace {
       );
     }
 
-    _sweepERC20Orders(erc20TokensToSell, erc20ToSellTotalAmounts, msg.sender, true); // Transfer toSell to buyer
-    _sweepERC20Orders(erc20TokensToFulfill, erc20ToFulfillTotalAmounts, msg.sender, false); // Transfer toFulfill to seller
+    _sweepERC20Orders(erc20TokensToSell, erc20ToSellTotalAmounts, new address[](erc20TokensToSell.length), true); // Transfer toSell to buyer
+    _sweepERC20Orders(erc20TokensToFulfill, erc20ToFulfillTotalAmounts, sellerToFulfill, false); // Transfer toFulfill to seller
   }
 
   // Helper function to aggregate token amounts
   function _aggregateToken(
+    address[] memory sellerToFulfill,
+    address seller,
     address[] memory tokens,
     uint256[] memory totalAmounts,
     address asset,
     uint256 amount,
     uint256 tokenCount,
     uint256 maxTokens
-  ) internal pure returns (uint256, address[] memory, uint256[] memory) {
+  ) internal pure returns (uint256, address[] memory, address[] memory, uint256[] memory) {
     for (uint256 j = 0; j < tokenCount; j++) {
       if (tokens[j] == asset) {
         totalAmounts[j] += amount;
-        return (tokenCount, tokens, totalAmounts);
+        return (tokenCount, sellerToFulfill, tokens, totalAmounts);
       }
     }
 
     require(tokenCount < maxTokens, "Too many distinct tokens");
     tokens[tokenCount] = asset;
     totalAmounts[tokenCount] = amount;
-    return (tokenCount + 1, tokens, totalAmounts);
+    sellerToFulfill[tokenCount] = seller;
+
+    return (tokenCount + 1, sellerToFulfill, tokens, totalAmounts);
   }
 
-  function _sweepERC20Orders(address[] memory tokens, uint256[] memory totalAmounts, address primaryAddress, bool isToBuyer) internal {
+  function _sweepERC20Orders(address[] memory tokens, uint256[] memory totalAmounts, address[] memory primaryAddress, bool isToBuyer) internal {
     for (uint256 i = 0; i < tokens.length; i++) {
       if (tokens[i] == address(0)) break; // End loop if address array contains empty slots
       uint256 totalAmount = totalAmounts[i];
       if (totalAmount > 0) {
-        address to = isToBuyer ? primaryAddress : msg.sender;
-        address from = isToBuyer ? msg.sender : primaryAddress;
+        address to = isToBuyer ? msg.sender : primaryAddress[i];
+        address from = isToBuyer ? primaryAddress[i] : msg.sender;
+        console.log("transfrom");
+        console.logAddress(from);
+        console.logAddress(to);
         require(IERC20(tokens[i]).transferFrom(from, to, totalAmount), "ERC20 transfer failed");
       }
     }
@@ -386,10 +403,6 @@ contract Marketplace is IMarketplace {
     } else {
       return AssetType.ERC20;
     }
-  }
-
-  function _isERC20(address asset) internal view returns (bool) {
-    return !_isERC1155(asset) && !_isERC721(asset);
   }
 
   function _isERC721(address asset) internal view returns (bool) {

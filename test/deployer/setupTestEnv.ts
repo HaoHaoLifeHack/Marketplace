@@ -139,5 +139,4 @@ async function setupAllowanceToMarketplace(marketplace, seller, buyer, usdc, hig
   console.log(`Marketplace USDC allowance of seller: ${await usdc.allowance(sellerAddress, marketplaceAddress)}`);
   console.log(`Marketplace HIGH allowance of buyer: ${await high.allowance(buyerAddress, marketplaceAddress)}`);
   console.log(`Marketplace WETH allowance of buyer: ${await weth.allowance(buyerAddress, marketplaceAddress)}`);
-  console.log(`Buyer WETH balance: ${await weth.balanceOf(buyerAddress)}`);
 }

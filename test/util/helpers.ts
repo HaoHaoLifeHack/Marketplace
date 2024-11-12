@@ -29,7 +29,7 @@ export function getTriggerOrder(
       amountOrTokenIds: toFulfill.amountOrTokenIds, // Use amount or token IDs as needed
     },
     deadline: Math.floor(Date.now() / 1000) + expiryDurationInSeconds, // Set expiration
-    fulfilled: false,
+    fulfilled: fulfilled,
   };
 }
 

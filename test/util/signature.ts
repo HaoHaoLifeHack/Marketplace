@@ -5,7 +5,7 @@ import { defaultAbiCoder } from "@ethersproject/abi";
 import { keccak256 } from "@ethersproject/keccak256";
 import { TEST_CONFIG } from "./testConfig";
 
-export interface OrderStruct {
+export interface TriggerOrder {
   eid: bigint;
   buyer: string;
   seller: string;
@@ -15,9 +15,19 @@ export interface OrderStruct {
   deadline: bigint;
 }
 
+export interface BasicOrder {
+  eid: bigint;
+  buyer: string;
+  seller: string;
+  toSell: { asset: string; ids: number[]; amountOrTokenIds: number[] };
+  toFulfill: { asset: string; ids: number[]; amountOrTokenIds: number[] };
+  fulfilled: boolean;
+  deadline: bigint;
+}
+
 export async function getOrderSignature(orderData: any, signerAddress: string): Promise<string> {
   const signer = await ethers.getSigner(signerAddress);
-  const messageHash = getOrderHash(orderData);
+  const messageHash = orderData.toSell.executeAddress == undefined ? getOrderBasicHash(orderData) : getOrderHash(orderData);
   return await signer.signMessage(ethers.toBeArray(messageHash));
 }
 
@@ -28,7 +38,7 @@ export async function verifyOrderSignature(orderData: any, signature: string): P
   return recoveredAddress === orderData.seller;
 }
 
-export function getOrderHash(orderData: OrderStruct): string {
+export function getOrderHash(orderData: TriggerOrder): string {
   return keccak256(
     keccak256(
       defaultAbiCoder.encode(
@@ -39,6 +49,29 @@ export function getOrderHash(orderData: OrderStruct): string {
           orderData.seller,
           orderData.toSell.executeAddress,
           orderData.toSell.data,
+          orderData.toFulfill.asset,
+          orderData.toFulfill.ids,
+          orderData.toFulfill.amountOrTokenIds,
+          orderData.deadline,
+          orderData.fulfilled,
+        ]
+      )
+    )
+  );
+}
+
+export function getOrderBasicHash(orderData: BasicOrder): string {
+  return keccak256(
+    keccak256(
+      defaultAbiCoder.encode(
+        ["uint256", "address", "address", "address", "uint256[]", "uint256[]", "address", "uint256[]", "uint256[]", "uint256", "bool"],
+        [
+          orderData.eid,
+          orderData.buyer,
+          orderData.seller,
+          orderData.toSell.asset,
+          orderData.toSell.ids,
+          orderData.toSell.amountOrTokenIds,
           orderData.toFulfill.asset,
           orderData.toFulfill.ids,
           orderData.toFulfill.amountOrTokenIds,
