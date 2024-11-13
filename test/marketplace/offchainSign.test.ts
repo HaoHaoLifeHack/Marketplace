@@ -85,14 +85,15 @@ describe("OffchainSign test", function () {
   });
 
   describe("List & Cancel orders constructed by merkle tree", function () {
+    let tree: any;
+    beforeEach(async function () {
+      tree = await generateMerkleTree(merkleOrders);
+    });
     it("Should update merkle root on-chain", async function () {
-      const tree = await generateMerkleTree(merkleOrders);
       await marketplace.connect(seller).updateMerkleRoot(tree.root);
-
       expect(await marketplace.merkleRoots(await seller.getAddress())).to.equal(tree.root);
     });
     it("Should cancel batch orders on-chain", async function () {
-      const tree = await generateMerkleTree(merkleOrders);
       await marketplace.connect(seller).updateMerkleRoot(tree.root);
       await marketplace.connect(seller).cancelMerkleOrders();
       expect(await marketplace.merkleRoots(seller)).to.equal("0x0000000000000000000000000000000000000000000000000000000000000000");

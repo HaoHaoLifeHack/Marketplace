@@ -43,8 +43,8 @@ export async function deployMarketplace() {
   // Deploy DAO contract
   const SimpleDAO = await ethers.getContractFactory("SimpleDAO", owner);
   const simpleDAO = await SimpleDAO.deploy(await usdc.getAddress(), 10000);
-  // const SimpleDAOV2 = await ethers.getContractFactory("SimpleDAOV2", owner);
-  // const simpleDAOV2 = await SimpleDAOV2.deploy(await usdc.getAddress(), 0, 10000);
+  const SimpleDAOV2 = await ethers.getContractFactory("SimpleDAOV2", owner);
+  const simpleDAOV2 = await SimpleDAOV2.deploy(await mockERC1155.getAddress(), 0, 10000);
 
   return {
     owner,
@@ -61,6 +61,7 @@ export async function deployMarketplace() {
     mockERC1155,
     contractAccount,
     simpleDAO,
+    simpleDAOV2,
   };
 }
 

@@ -5,8 +5,23 @@ import { IERC1155, IPriceFeed, OracleHandler, WETH } from "../../typechain-types
 
 export async function setupTestEnvironment() {
   // Deploy all contracts
-  var { owner, seller, buyer, mockNFTPriceFeed, oracleHandler, marketplace, high, usdc, weth, bayc, azuki, mockERC1155, contractAccount, simpleDAO } =
-    await deployMarketplace();
+  var {
+    owner,
+    seller,
+    buyer,
+    mockNFTPriceFeed,
+    oracleHandler,
+    marketplace,
+    high,
+    usdc,
+    weth,
+    bayc,
+    azuki,
+    mockERC1155,
+    contractAccount,
+    simpleDAO,
+    simpleDAOV2,
+  } = await deployMarketplace();
 
   // Set Oracle price feed
   oracleHandler = await setupOraclePriceFeed(oracleHandler, await mockNFTPriceFeed.getAddress(), await mockERC1155.getAddress());
@@ -61,6 +76,7 @@ export async function setupTestEnvironment() {
     mockERC1155,
     contractAccount,
     simpleDAO,
+    simpleDAOV2,
   };
 }
 
