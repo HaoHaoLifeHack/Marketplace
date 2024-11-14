@@ -88,13 +88,12 @@ describe("OffchainSign test", function () {
     let tree: any;
     beforeEach(async function () {
       tree = await generateMerkleTree(merkleOrders);
+      await marketplace.connect(seller).updateMerkleRoot(tree.root);
     });
     it("Should update merkle root on-chain", async function () {
-      await marketplace.connect(seller).updateMerkleRoot(tree.root);
       expect(await marketplace.merkleRoots(await seller.getAddress())).to.equal(tree.root);
     });
     it("Should cancel batch orders on-chain", async function () {
-      await marketplace.connect(seller).updateMerkleRoot(tree.root);
       await marketplace.connect(seller).cancelMerkleOrders();
       expect(await marketplace.merkleRoots(seller)).to.equal("0x0000000000000000000000000000000000000000000000000000000000000000");
     });
@@ -188,11 +187,16 @@ describe("OffchainSign test", function () {
   });
 
   describe("Fulfill order constructed by merkle tree", function () {
-    it("Should fulfill order with merkle proof on-chain", async function () {
-      const tree = await generateMerkleTree(merkleOrders);
+    let tree: any;
+    let orderHash: any;
+    let signature: any;
+    beforeEach(async function () {
+      tree = await generateMerkleTree(merkleOrders);
       await marketplace.connect(seller).updateMerkleRoot(tree.root);
-      const orderHash = getOrderHash(merkleOrders[0]);
-      const signature = await getOrderSignature(merkleOrders[0], await seller.getAddress());
+      orderHash = getOrderHash(merkleOrders[0]);
+      signature = await getOrderSignature(merkleOrders[0], await seller.getAddress());
+    });
+    it("Should fulfill order with merkle proof on-chain", async function () {
       const proof = await searchProof(tree, flattenOrder(merkleOrders[0]));
       const platformFee =
         ((await oracleHandler.getLatestPriceInETH(offchainOrder.toFulfill.asset)) * BigInt(offchainOrder.toFulfill.amountOrTokenIds[0] * 5)) /
@@ -204,10 +208,6 @@ describe("OffchainSign test", function () {
       expect(await marketplace.fulfilledOrders(orderHash)).to.be.true;
     });
     it("Should revert order with wrong merkle proof", async function () {
-      const tree = await generateMerkleTree(merkleOrders);
-      await marketplace.connect(seller).updateMerkleRoot(tree.root);
-      const orderHash = getOrderHash(merkleOrders[0]);
-      const signature = await getOrderSignature(merkleOrders[0], await seller.getAddress());
       const proof = tree.getProof(2);
       const platformFee =
         ((await oracleHandler.getLatestPriceInETH(offchainOrder.toFulfill.asset)) * BigInt(offchainOrder.toFulfill.amountOrTokenIds[0] * 5)) /
